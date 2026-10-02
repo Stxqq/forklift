@@ -253,6 +253,105 @@ export function encode(text, { level = "M", version = null, mask = null } = {}) 
 }
 
 /**
+ * Every step of building a code, for the label lab: the function
+ * patterns, the bit stream part by part, the Reed–Solomon blocks, the
+ * placement order, all eight masks with their penalty scores and the
+ * format bits. `mask` forces one.
+ */
+export function explain(text, { level = "M", mask = null } = {}) {
+  const bytes = utf8(text);
+  let version = 1;
+  while (version <= MAX_VERSION && capacity(version, level) < bytes.length) version++;
+  if (version > MAX_VERSION) throw new Error(`"${text}" doesn't fit a version ${MAX_VERSION} code at level ${level}`);
+  const [ec, blocks, perBlock] = TABLE[version][level];
+  const dataCount = blocks * perBlock;
+  const bin = (v, n) => v.toString(2).padStart(n, "0");
+  const segments = [
+    { kind: "mode", label: "Mode: byte", bits: "0100" },
+    { kind: "count", label: `Length: ${bytes.length}`, bits: bin(bytes.length, 8) },
+    { kind: "data", label: `${bytes.length} data bytes`, bits: bytes.map((b) => bin(b, 8)).join("") },
+  ];
+  const used = 12 + bytes.length * 8;
+  const term = Math.min(4, dataCount * 8 - used);
+  segments.push({ kind: "terminator", label: "Terminator", bits: "0".repeat(term) });
+  const fill = (8 - ((used + term) % 8)) % 8;
+  if (fill) segments.push({ kind: "fill", label: "To a whole byte", bits: "0".repeat(fill) });
+  const padCount = dataCount - (used + term + fill) / 8;
+  const pads = [];
+  for (let i = 0; i < padCount; i++) pads.push(i % 2 ? 0x11 : 0xec);
+  if (pads.length) segments.push({ kind: "pad", label: `${pads.length} pad bytes`, bits: pads.map((b) => bin(b, 8)).join("") });
+
+  const words = codewords(bytes, version, level);
+  const dataWords = [];
+  const blockList = [];
+  for (let b = 0; b < blocks; b++) {
+    const data = [];
+    const parity = [];
+    for (let i = 0; i < perBlock; i++) data.push(words[i * blocks + b]);
+    for (let i = 0; i < ec; i++) parity.push(words[dataCount + i * blocks + b]);
+    blockList.push({ data, ec: parity });
+    dataWords.push(...data);
+  }
+
+  const { size, modules, fixed } = template(version);
+  // what each fixed module is, for highlighting
+  const roles = Array.from({ length: size }, () => new Array(size).fill(null));
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      if (!fixed[y][x]) continue;
+      const inFinder = (x < 8 && y < 8) || (x >= size - 8 && y < 8) || (x < 8 && y >= size - 8);
+      const a = ALIGN[version];
+      if (inFinder) {
+        const fx = x < 8 ? 3 : size - 4;
+        const fy = y < 8 ? 3 : size - 4;
+        roles[y][x] = Math.max(Math.abs(x - fx), Math.abs(y - fy)) >= 4 ? "separator" : "finder";
+      } else if (a && Math.abs(x - a) <= 2 && Math.abs(y - a) <= 2) roles[y][x] = "alignment";
+      else if (x === 6 || y === 6) roles[y][x] = "timing";
+      else roles[y][x] = "format";
+    }
+  }
+  roles[size - 8][8] = "dark";
+  for (const copy of formatCells(size)) for (const [x, y] of copy) if (roles[y][x] === null || roles[y][x] === "separator") roles[y][x] = "format";
+
+  const order = [];
+  zigzag(size, fixed, (x, y) => order.push([x, y]));
+  const unmasked = modules.map((row) => row.slice());
+  order.forEach(([x, y], i) => (unmasked[y][x] = i < words.length * 8 ? bit(words[i >>> 3], 7 - (i & 7)) : false));
+  const masks = [];
+  for (let k = 0; k < 8; k++) {
+    const m = unmasked.map((row) => row.slice());
+    const f = MASKS[k];
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (!fixed[y][x] && f(x, y)) m[y][x] = !m[y][x];
+    drawFormat(m, fixed.map((row) => row.slice()), formatBits(level, k));
+    masks.push({ mask: k, modules: m, penalty: penalty(m) });
+  }
+  const best = masks.reduce((a, b) => (b.penalty < a.penalty ? b : a)).mask;
+  const chosen = mask ?? best;
+  const format = formatBits(level, chosen);
+  return {
+    text,
+    bytes,
+    version,
+    level,
+    size,
+    capacity: capacity(version, level),
+    ecPerBlock: ec,
+    blocks: blockList,
+    segments,
+    dataWords,
+    words,
+    roles,
+    order,
+    unmasked,
+    masks,
+    best,
+    mask: chosen,
+    format: { bits: format, text: bin(format, 15), cells: formatCells(size) },
+    code: { version, level, mask: chosen, size, modules: masks[chosen].modules },
+  };
+}
+
+/**
  * Paints a code into a grayscale image: `scale` pixels per module and a
  * `quiet` module border. `marks` are discs in module coordinates painted
  * over it (scuffs, tape, a torn corner), `glare` a soft bright spot, and
@@ -388,14 +487,26 @@ export function decode(image) {
   let k = 0;
   for (let i = 0; i < perBlock; i++) for (const b of split) b.push(words[k++]);
   for (let i = 0; i < ec; i++) for (const b of split) b.push(words[k++]);
+  // where block b's i-th codeword sits in the symbol's order
+  const at = (b, i) => (i < perBlock ? i * blocks + b : perBlock * blocks + (i - perBlock) * blocks + b);
+  const info = { threshold, box: { x: x0, y: y0, w: boxW, h: boxH }, version, level: LEVEL_NAMES[LEVELS[level]], mask, grid, raw: words.slice(), fixed: words.slice(), wrong: [], failedBlocks: [] };
   let corrected = 0;
   const payload = [];
-  for (const block of split) {
+  split.forEach((block, b) => {
+    const before = block.slice();
     const fixedCount = rsDecode(block, ec);
-    if (fixedCount < 0) return FAIL("too damaged to correct");
+    if (fixedCount < 0) {
+      info.failedBlocks.push(b);
+      return;
+    }
     corrected += fixedCount;
+    block.forEach((w, i) => {
+      info.fixed[at(b, i)] = w;
+      if (w !== before[i]) info.wrong.push(at(b, i));
+    });
     payload.push(...block.slice(0, perBlock));
-  }
+  });
+  if (info.failedBlocks.length) return { ...FAIL("too damaged to correct"), info };
 
   const reader = bitReader(payload);
   const mode = reader(4);
@@ -405,7 +516,7 @@ export function decode(image) {
   const bytes = [];
   for (let i = 0; i < length; i++) bytes.push(reader(8));
   const text = new TextDecoder().decode(new Uint8Array(bytes));
-  return { ok: true, text, version, level: LEVEL_NAMES[LEVELS[level]], mask, corrected, grid, box: { x: x0, y: y0, w: boxW, h: boxH } };
+  return { ok: true, text, version, level: LEVEL_NAMES[LEVELS[level]], mask, corrected, grid, box: info.box, info: { ...info, bytes } };
 }
 
 function sampleGrid(dark, x0, y0, mw, mh, size, width, height) {

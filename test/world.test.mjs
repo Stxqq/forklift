@@ -155,3 +155,40 @@ test("package labels fit a version 2 code at level M", () => {
     assert.equal(encode(pkg.payload).version, 2);
   }
 });
+
+test("an order goes to the robot that can get there first", () => {
+  const world = new World({ seed: 3, mode: "dispatch", robots: 2, workers: 0 });
+  // robot 1 parks at the top of the west side, robot 2 lower down; pick a
+  // bay near robot 2's pocket
+  const near = world.warehouse.bays.find((b) => b.expected && b.id.startsWith("D") && Number(b.id.slice(1)) <= 3);
+  const order = world.orderFor(near, "you");
+  world.step();
+  assert.equal(order.robot, 1, "robot 2 is nearer");
+});
+
+test("routes carry an ETA, and other robots' plans are in the reservation table", () => {
+  const world = new World({ seed: 4, mode: "dispatch", robots: 2, workers: 0 });
+  const bays = world.warehouse.bays.filter((b) => world.orderable(b));
+  world.orderFor(bays[5], "you");
+  world.orderFor(bays[40], "you");
+  run(world, 1);
+  const [a, b] = world.robots;
+  assert.ok(a.eta > world.time && b.eta > world.time);
+  const booked = world.reservations(a);
+  for (const c of b.path.slice(b.i + 1)) assert.ok(booked.has(c), `cell ${c} of robot 2's route is booked`);
+});
+
+test("cooperative routing beats routing as if the floor were empty", () => {
+  const perHour = (routing) => {
+    let arrived = 0;
+    for (const seed of [11, 12]) {
+      const world = new World({ seed, mode: "dispatch", robots: 4, routing });
+      run(world, 15 * 60, keepBusy);
+      arrived += world.book.counts().arrived;
+    }
+    return arrived;
+  };
+  const simple = perHour("simple");
+  const coop = perHour("cooperative");
+  assert.ok(coop > simple, `${coop} vs ${simple}`);
+});

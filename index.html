@@ -59,7 +59,15 @@
             </div>
             <p class="scan-text" id="scan-text">Reading…</p>
             <p class="scan-meta" id="scan-meta"></p>
+            <div class="pipe" id="pipe" hidden>
+              <figure><canvas></canvas><figcaption>Camera</figcaption></figure>
+              <figure><canvas></canvas><figcaption>Threshold</figcaption></figure>
+              <figure><canvas></canvas><figcaption>Finders</figcaption></figure>
+              <figure><canvas></canvas><figcaption>Grid</figcaption></figure>
+              <div class="pipe-bytes"></div>
+            </div>
           </div>
+
 
           <div class="touch" aria-label="Driving controls">
             <div class="touch-pair">
@@ -87,6 +95,12 @@
                 <li>Drive</li><li>Pick up</li><li>Scan</li><li>Deliver</li><li>Confirmed</li>
               </ol>
               <p class="order-next" id="order-next"></p>
+            </div>
+
+            <div class="card plan-card" id="plan-card" hidden>
+              <div class="card-head"><b>Reservations</b><em id="plan-note">who holds which cell, when</em></div>
+              <canvas class="timeline" id="timeline" aria-label="Each robot's booked cells over the next seconds"></canvas>
+              <p class="legend"><i style="background:#2563eb"></i><span>driving</span><i style="background:#f59e0b"></i><span>planned wait</span><i style="background:rgba(17,17,19,.2)"></i><span>at the bay or dock</span></p>
             </div>
 
             <div class="card log-card">
@@ -133,6 +147,13 @@
                   <span><kbd>S</kbd></span><span>scan</span>
                 </p>
               </div>
+              <div class="ctl">
+                <small>Explain</small>
+                <div class="chips" role="group" aria-label="Explainers">
+                  <button type="button" class="chip not-drive" id="explain-route" aria-pressed="false">Route</button>
+                  <button type="button" class="chip" id="explain-scan" aria-pressed="false">Scan</button>
+                </div>
+              </div>
               <p class="hint only-dispatch">Click a box to order it. Click a robot to follow it.</p>
               <p class="hint only-watch">One robot, orders from the stock records.</p>
               <div class="links">
@@ -153,59 +174,104 @@
         <div class="feed-tile feed-anno" id="anatomy" tabindex="0" aria-label="Anatomy of the robot. Hover or focus for the spec sheet.">
           <div class="anno-frame bot-frame">
             <svg class="rays" aria-hidden="true"><g data-rays></g></svg>
-            <svg class="bot" viewBox="0 0 56 104" aria-hidden="true">
-              <g data-field>
-                <path class="field" d="M28 66 L4 -26 A96 96 0 0 1 52 -26 Z"/>
-              </g>
-              <rect x="-3" y="58" width="5" height="16" rx="2" fill="#2b2b30"/>
-              <rect x="54" y="58" width="5" height="16" rx="2" fill="#2b2b30"/>
+            <svg class="bot" viewBox="0 0 60 110" aria-hidden="true">
+              <defs>
+                <linearGradient id="chassis" x1="0" x2="1" y1="0" y2="0">
+                  <stop offset="0" stop-color="#2b2b31"/>
+                  <stop offset=".45" stop-color="#151518"/>
+                  <stop offset="1" stop-color="#0b0b0d"/>
+                </linearGradient>
+                <linearGradient id="tine" x1="0" x2="1">
+                  <stop offset="0" stop-color="#c4c4cc"/>
+                  <stop offset="1" stop-color="#8f8f98"/>
+                </linearGradient>
+                <radialGradient id="dome" cx=".35" cy=".35" r=".7">
+                  <stop offset="0" stop-color="#fde68a"/>
+                  <stop offset="1" stop-color="#d97706"/>
+                </radialGradient>
+              </defs>
+              <g data-field><path class="field" d="M30 66 L6 -30 A100 100 0 0 1 54 -30 Z"/></g>
+              <rect x="5" y="37" width="52" height="70" rx="8" fill="rgba(0,0,0,.18)"/>
+              <!-- outriggers with casters -->
+              <rect x="4" y="35" width="7.5" height="35" rx="2.5" fill="#26262b"/>
+              <rect x="48.5" y="35" width="7.5" height="35" rx="2.5" fill="#26262b"/>
+              <rect x="5.4" y="36.4" width="4.6" height="5.6" rx="1" fill="#8a8a93"/>
+              <rect x="50" y="36.4" width="4.6" height="5.6" rx="1" fill="#8a8a93"/>
+              <!-- carriage, backrest and tapered tines -->
               <g data-forks>
-                <rect x="7" y="2" width="7" height="32" rx="1.5" fill="#a1a1aa"/>
-                <rect x="42" y="2" width="7" height="32" rx="1.5" fill="#a1a1aa"/>
-                <rect x="4" y="30" width="48" height="5" rx="1.5" fill="#71717a"/>
+                <rect x="10" y="63.5" width="40" height="3" rx="1" fill="#3f3f46"/>
+                <path d="M12 63.5h36M14 62v1.5M20 62v1.5M26 62v1.5M34 62v1.5M40 62v1.5M46 62v1.5" stroke="#52525b" stroke-width=".8"/>
+                <path d="M15.4 64 L16 35 L17.6 32 H20.4 L22 35 L22.6 64 Z" fill="url(#tine)"/>
+                <path d="M37.4 64 L38 35 L39.6 32 H42.4 L44 35 L44.6 64 Z" fill="url(#tine)"/>
+                <path d="M16.6 62 L17 36M38.6 62 L39 36" stroke="rgba(255,255,255,.55)" stroke-width=".7"/>
               </g>
-              <g data-load transform="translate(28 14)">
-                <rect x="-17" y="-15" width="34" height="30" rx="1.5" fill="#e7cfa4" stroke="#c9ab78" stroke-width=".8"/>
-                <rect x="-2" y="-15" width="4" height="30" fill="rgba(255,255,255,.35)"/>
-                <rect x="-8" y="-8" width="16" height="16" fill="#fff"/>
-                <path d="M-7 -7h5v5h-5zM2 -7h5v5h-5zM-7 2h5v5h-5zM0 0h2v2h-2zM3 3h2v4h-2z" fill="#111113"/>
+              <g data-load transform="translate(30 48)">
+                <rect x="-19" y="-19" width="38" height="38" rx="1.2" fill="#e9d8b9" stroke="#c8ad7f" stroke-width=".7"/>
+                <rect x="-2.4" y="-19" width="4.8" height="38" fill="rgba(255,255,255,.32)"/>
+                <rect x="-9" y="-9" width="18" height="18" fill="#fff"/>
+                <path d="M-8 -8h5v5h-5zM3 -8h5v5h-5zM-8 3h5v5h-5zM-1 -1h2v2h-2zM2 2h2v2h-2zM4 4h2v3h-2zM-1 4h2v2h-2z" fill="#111113"/>
               </g>
-              <rect y="34" width="56" height="70" rx="9" fill="#111113"/>
-              <rect x="3" y="36" width="50" height="4" rx="1.5" fill="#3f3f46"/>
-              <rect x="20" y="42" width="16" height="4" rx="2" fill="#60a5fa" opacity=".9"/>
-              <circle cx="28" cy="66" r="8" fill="#27272a"/>
-              <circle cx="28" cy="66" r="3.2" fill="rgba(255,255,255,.35)"/>
-              <rect x="16" y="88" width="24" height="9" rx="2" fill="none" stroke="rgba(255,255,255,.35)" stroke-width="1"/>
-              <rect data-battery x="17" y="89" width="22" height="7" rx="1.2" fill="#16a34a"/>
-              <circle data-lamp cx="7" cy="98" r="2.2" fill="#60a5fa"/>
+              <!-- chassis -->
+              <rect x="4" y="66" width="52" height="39" rx="7.5" fill="url(#chassis)"/>
+              <path d="M8 84H52M10 70V101M50 70V101" stroke="rgba(255,255,255,.08)" stroke-width=".6"/>
+              <rect x="7" y="101.5" width="46" height="3.5" rx="1.4" fill="#3a3a40"/>
+              <rect x="21" y="104.6" width="5" height="1.4" fill="#c8ad73"/>
+              <rect x="34" y="104.6" width="5" height="1.4" fill="#c8ad73"/>
+              <rect x="3.6" y="75" width="2" height="13" rx=".6" fill="#050506"/>
+              <rect x="54.4" y="75" width="2" height="13" rx=".6" fill="#050506"/>
+              <rect data-leds x="5.4" y="71" width="1.3" height="28" rx=".6" fill="#3b82f6"/>
+              <rect data-leds x="53.3" y="71" width="1.3" height="28" rx=".6" fill="#3b82f6"/>
+              <!-- mast -->
+              <rect x="6" y="64" width="48" height="5" rx="1" fill="#52525b"/>
+              <rect x="8" y="64.5" width="5" height="4" fill="#71717a"/>
+              <rect x="47" y="64.5" width="5" height="4" fill="#71717a"/>
+              <!-- safety scanner window -->
+              <rect x="21" y="69.6" width="18" height="4" rx="1.6" fill="#0b1220"/>
+              <rect x="23" y="70.6" width="14" height=".9" rx=".45" fill="rgba(96,165,250,.6)"/>
+              <!-- lidar -->
+              <circle cx="30" cy="79" r="7" fill="#2b2b31"/>
+              <circle cx="30" cy="79" r="4.5" fill="#3f3f46"/>
+              <circle cx="28.4" cy="77.5" r="1.4" fill="rgba(255,255,255,.35)"/>
+              <!-- battery gauge, ID plate, beacon, emergency stop -->
+              <rect x="22" y="87" width="16" height="4.4" rx="1" fill="none" stroke="rgba(255,255,255,.3)" stroke-width=".6"/>
+              <rect data-battery x="22.6" y="87.6" width="14.8" height="3.2" rx=".6" fill="#16a34a"/>
+              <rect x="25.5" y="93.6" width="9" height="6.6" rx="1" fill="#fafafa"/>
+              <text data-plate x="30" y="98.4" text-anchor="middle" font-size="4" font-weight="700" fill="#111113">R1</text>
+              <circle data-beacon cx="13.5" cy="97" r="3" fill="url(#dome)"/>
+              <circle cx="46.5" cy="97" r="3.3" fill="#facc15"/>
+              <circle cx="46.5" cy="97" r="2.2" fill="#dc2626"/>
             </svg>
 
             <div class="kl" aria-hidden="true">
               <div class="kl-box"></div>
-              <div class="kl-dim kl-dim-top"><i></i><b>0.56</b><i></i></div>
-              <div class="kl-dim kl-dim-side"><i></i><b>1.04</b><i></i></div>
-              <div class="kl-axle" style="top: 63.5%"></div>
+              <div class="kl-dim kl-dim-top"><i></i><b>0.52</b><i></i></div>
+              <div class="kl-dim kl-dim-side" style="top: 31.8%; bottom: 4.5%"><i></i><b>0.70</b><i></i></div>
+              <div class="kl-axle" style="top: 71.8%"></div>
             </div>
 
-            <div class="anno-item anno-left" style="top: 63.5%">
-              <div class="anno-label"><em>01</em><b>Lidar</b><span>270°, 6 m, 37 rays</span></div>
+            <div class="anno-item anno-left" style="top: 24%">
+              <div class="anno-label"><em>01</em><b>Mast &amp; fork</b><span>Lifts 1.6&nbsp;m, reaches 0.62&nbsp;m</span></div>
               <i class="anno-line"></i><i class="anno-dot"></i>
             </div>
-            <div class="anno-item anno-right" style="top: 42%">
+            <div class="anno-item anno-right" style="top: 44%">
               <i class="anno-dot"></i><i class="anno-line"></i>
-              <div class="anno-label"><em>02</em><b>Scanner</b><span>Decodes QR versions 1–4 from pixels</span></div>
+              <div class="anno-label"><em>02</em><b>Label scanner</b><span>On the carriage, reads the QR</span></div>
             </div>
-            <div class="anno-item anno-left" style="top: 12%">
-              <div class="anno-label"><em>03</em><b>Fork</b><span>Lifts 0–1.6 m, reaches 0.3 m, 30 kg</span></div>
+            <div class="anno-item anno-left" style="top: 64%">
+              <div class="anno-label"><em>03</em><b>Safety scanner</b><span>Slows at 3.2&nbsp;m, stops at 1.35&nbsp;m</span></div>
               <i class="anno-line"></i><i class="anno-dot"></i>
             </div>
-            <div class="anno-item anno-right" style="top: 63.5%">
+            <div class="anno-item anno-right" style="top: 76%">
               <i class="anno-dot"></i><i class="anno-line"></i>
-              <div class="anno-label"><em>04</em><b>Drive</b><span>Two wheels, 1.5 m/s, turns on the spot</span></div>
+              <div class="anno-label"><em>04</em><b>Lidar &amp; drive</b><span>270°, 6&nbsp;m · 1.5&nbsp;m/s</span></div>
             </div>
-            <div class="anno-item anno-right" style="top: 89%">
+            <div class="anno-item anno-left" style="top: 86%">
+              <div class="anno-label"><em>05</em><b>Beacon &amp; e-stop</b><span>Lit while it moves</span></div>
+              <i class="anno-line"></i><i class="anno-dot"></i>
+            </div>
+            <div class="anno-item anno-right" style="top: 95%">
               <i class="anno-dot"></i><i class="anno-line"></i>
-              <div class="anno-label"><em>05</em><b>Battery</b><span>Goes to charge below 20 %</span></div>
+              <div class="anno-label"><em>06</em><b>Battery</b><span>Charges below 20&nbsp;%</span></div>
             </div>
           </div>
           <div class="anno-hint"><span class="on-hover">Hover for details</span><span class="on-touch">Tap for details</span></div>
@@ -217,18 +283,76 @@
       </figure>
     </section>
 
+    <section class="lab reveal" id="lab" aria-label="Label lab" data-step="1">
+      <div class="lab-intro">
+        <h2 class="dear">Label lab</h2>
+        <p class="gray">
+          Every box carries a QR label. Type your own and watch it being
+          built step by step, with the same encoder the robots' labels come
+          from. Then scratch it and let the decoder try.
+        </p>
+      </div>
+      <div class="lab-tile">
+        <div class="lab-left">
+          <canvas id="lab-grid" class="lab-grid" aria-label="The QR code being built; on the last step, click or drag to scratch modules"></canvas>
+          <div class="lab-stepper">
+            <button type="button" class="chip" id="lab-prev" aria-label="Previous step">‹</button>
+            <div class="lab-dots" id="lab-dots"></div>
+            <button type="button" class="chip" id="lab-next" aria-label="Next step">›</button>
+            <button type="button" class="chip" id="lab-play" aria-pressed="false">Play</button>
+          </div>
+        </div>
+        <div class="lab-right">
+          <div class="card lab-card">
+            <label class="lab-label" for="lab-text">Label text</label>
+            <input id="lab-text" class="lab-input" type="text" maxlength="78" value="PKG-00421 · Bay B3 · Dock 2" spellcheck="false" autocomplete="off">
+            <div class="ctl lab-levels">
+              <small>Error correction</small>
+              <div class="chips" role="group" aria-label="Error correction level">
+                <button type="button" class="chip" data-level="L" aria-pressed="false" title="about 7 % can be restored">L</button>
+                <button type="button" class="chip" data-level="M" aria-pressed="true" title="about 15 %">M</button>
+                <button type="button" class="chip" data-level="Q" aria-pressed="false" title="about 25 %">Q</button>
+                <button type="button" class="chip" data-level="H" aria-pressed="false" title="about 30 %">H</button>
+              </div>
+            </div>
+            <p class="lab-meta" id="lab-meta"></p>
+          </div>
+          <div class="card lab-card lab-step">
+            <h3 id="lab-step-title">1 · Function patterns</h3>
+            <p id="lab-step-text"></p>
+            <div id="lab-step-extra"></div>
+            <div class="lab-damage">
+              <div class="links">
+                <button type="button" id="lab-scan" class="lab-scan">Scan it</button>
+                <button type="button" id="lab-reset">Clear scratches</button>
+              </div>
+              <div id="lab-result" aria-live="polite"></div>
+            </div>
+          </div>
+          <div class="card lab-card lab-out">
+            <div class="links">
+              <button type="button" id="lab-png">PNG</button>
+              <button type="button" id="lab-svg">SVG</button>
+              <button type="button" id="lab-print">Print label</button>
+            </div>
+            <p class="hint">A phone camera reads these. The same codes pass Apple's Vision framework in the project's check script.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section class="column reveal" aria-label="How it works">
       <h2 class="dear">How it works</h2>
       <p class="gray">
-        Every 1/60 s each robot moves one fixed step. What it does with
-        that step comes from a short list of jobs, and every job is the
-        same five stages.
+        Every 1/60 s each robot moves one fixed step. Orders go to
+        whichever free robot gets to the bay soonest, and every job runs
+        through the same five stages.
       </p>
       <ol class="rows steps">
         <li><em>01</em><span>An order names a package, the bay the records say it's in, and a dock. In Watch they come from the stock records; in Dispatch from your clicks.</span></li>
-        <li><em>02</em><span>A* plans a route along the one-way lanes. A corner costs extra, because the robot has to stop and turn on the spot.</span></li>
-        <li><em>03</em><span>The robot reserves cells ahead of it and only drives into cells it holds. A crossing is taken together with the cell after it, so nobody stops in the middle of one.</span></li>
-        <li><em>04</em><span>At the bay it turns, raises the fork to the shelf, reaches in and lifts. An empty bay is reported missing.</span></li>
+        <li><em>02</em><span>Space-time A* plans the quickest route in seconds, not meters: corners are slower arcs, starting off costs time, and every other robot's plan is booked in a reservation table, so it can wait a moment or take a detour, whichever is sooner.</span></li>
+        <li><em>03</em><span>Roads have a lane each way and robots keep right. A robot only drives into cells it holds, and takes a crossing together with the cell after it, so nobody stops in the middle of one.</span></li>
+        <li><em>04</em><span>The fork goes up to the shelf on the way in. At the bay the robot turns, reaches in and lifts. An empty bay is reported missing.</span></li>
         <li><em>05</em><span>The scanner renders what it sees as pixels, finds the code and decodes it, Reed–Solomon and all. A wrong label goes back on the shelf; two failed reads flag the bay for a person.</span></li>
       </ol>
 
@@ -250,6 +374,7 @@
       <div class="rows facts">
         <div class="row"><span>One robot</span><b data-fact="solo">–</b></div>
         <div class="row"><span>Four robots</span><b data-fact="fleet">–</b></div>
+        <div class="row"><span>Mean trip, cooperative routing</span><b data-fact="trip">–</b></div>
         <div class="row"><span>Labels read on the first try</span><b data-fact="first">–</b></div>
         <div class="row"><span>Codewords fixed by Reed–Solomon</span><b data-fact="corrected">–</b></div>
         <div class="row"><span>Robots closer than one cell</span><b data-fact="closest">–</b></div>

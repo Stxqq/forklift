@@ -5,6 +5,8 @@ import { Anatomy } from "../render/anatomy.js";
 import { Stage, easeFactor } from "../render/stage.js";
 import { Counter } from "./counter.js";
 import { DispatchSession, DriveSession, ROBOT_COUNTS, SPEEDS, WatchSession } from "./sessions.js";
+import { Lab } from "./lab.js";
+import { drawPipeline, drawTimeline, planView } from "./explain.js";
 
 const $ = (selector) => document.querySelector(selector);
 const motion = matchMedia("(prefers-reduced-motion: reduce)");
@@ -73,6 +75,7 @@ function setMode(next) {
   if (next === mode) return;
   mode = next;
   sessions[mode] ??= create[mode]();
+  sessions[mode].world.traceRoutes = explainRoute;
   sessions[mode].speed = mode === "drive" ? 1 : speed;
   stageEl.dataset.mode = mode;
   release();
@@ -143,7 +146,8 @@ function showOrder(session) {
             ? "Picking the next order"
             : "Parked. Click a box to order it";
   }
-  const key = shown ? `${shown.order.id}:${stageNow}:${status}:${robot.waiting?.kind ?? ""}:${robot.safety}` : `none:${doing}`;
+  const etaKey = robot.eta && /^to/.test(robot.phase) ? Math.ceil(robot.eta - world.time) : "";
+  const key = shown ? `${shown.order.id}:${stageNow}:${status}:${robot.waiting?.kind ?? ""}:${robot.safety}:${etaKey}` : `none:${doing}`;
   if (key !== orderKey) {
     orderKey = key;
     const id = shown ? shown.order.id : null;
@@ -156,7 +160,9 @@ function showOrder(session) {
       orderTitle.textContent = `Order ${o.id}`;
       orderPkg.textContent = o.pkg;
       const wait = robot.waiting?.kind === "person" ? " · waiting for a person" : robot.waiting ? ` · yielding to robot ${robot.waiting.id + 1}` : robot.safety === "stop" ? " · stopped, person ahead" : robot.safety === "slow" ? " · slowing, person nearby" : "";
-      orderRoute.textContent = `Bay ${o.bay} → Dock ${o.dock || "?"}${status === "transit" ? wait : ` · ${STATUS[status].label}`}`;
+      const left = robot.eta && /^to/.test(robot.phase) ? Math.ceil(Math.max(0, robot.eta - world.time)) : null;
+      const eta = left !== null && !wait ? ` · ${robot.stage >= 3 ? "dock" : "bay"} in ${left} s` : "";
+      orderRoute.textContent = `Bay ${o.bay} → Dock ${o.dock || "?"}${status === "transit" ? wait + eta : ` · ${STATUS[status].label}`}`;
     } else {
       orderTitle.textContent = "Order";
       orderPkg.textContent = "–";
@@ -227,6 +233,8 @@ function wrongNote(world, order) {
 // ----------------------------------------------------------------- scan
 
 const scanCard = $("#scan");
+let explainScan = false;
+let explainRoute = false;
 const scanImage = $("#scan-image");
 const scanCtx = scanImage.getContext("2d");
 const scanText = $("#scan-text");
@@ -255,6 +263,7 @@ function showScan(world, now) {
     scanCtx.putImageData(img, 0, 0);
     scanAttempt.textContent = `Robot ${scan.robot + 1} · try ${scan.attempt}`;
     scanCard.dataset.state = "reading";
+    scanCard.dataset.pipe = "";
     scanText.textContent = "Reading…";
     scanMeta.textContent = "";
   }
@@ -265,6 +274,10 @@ function showScan(world, now) {
     const label = r.ok ? parsePayload(r.text) : null;
     const verdict = scan.verdict ?? (r.ok ? "ok" : "retry");
     scanCard.dataset.state = verdict;
+    if (explainScan) {
+      drawPipeline($("#pipe"), scan);
+      scanCard.dataset.pipe = "ready";
+    }
     if (r.ok) {
       scanText.textContent = verdict === "wrong" ? `⚠ ${label ? label.id : r.text}: wrong package` : label ? formatPayload(label) : r.text;
       scanMeta.textContent = `v${r.version}-${r.level} · mask ${r.mask} · ${r.corrected} codeword${r.corrected === 1 ? "" : "s"} fixed`;
@@ -273,7 +286,7 @@ function showScan(world, now) {
       scanMeta.textContent = r.reason;
     }
   }
-  if (scanRevealedAt && now - scanRevealedAt > 1800) return hideScan();
+  if (scanRevealedAt && now - scanRevealedAt > (explainScan ? 4200 : 1800)) return hideScan();
   // next to the robot that's scanning, kept inside the view
   const robot = world.robots[scan.robot];
   const view = canvas.getBoundingClientRect();
@@ -349,6 +362,50 @@ function showSensors(robot) {
   safetyEl.dataset.state = robot.safety;
 }
 
+// ------------------------------------------------------------ explainers
+
+const planCard = $("#plan-card");
+const timeline = $("#timeline");
+let shownTrace = null;
+let lastTimeline = 0;
+function showRoute(session, now) {
+  const on = explainRoute && mode !== "drive";
+  planCard.hidden = !on;
+  if (!on) {
+    stage.planView = null;
+    shownTrace = null;
+    return;
+  }
+  const focus = session.focus;
+  if (focus.planTrace && focus.planTrace !== shownTrace) {
+    shownTrace = focus.planTrace;
+    stage.planView = planView(focus, now);
+  }
+  // the replay fades once the robot is well on its way
+  if (stage.planView && now - stage.planView.started > 6000) stage.planView = null;
+  if (now - lastTimeline > 100) {
+    lastTimeline = now;
+    drawTimeline(timeline, session.world, session.focus);
+  }
+}
+
+function setExplain(kind, on) {
+  if (kind === "route") {
+    explainRoute = on;
+    for (const s of Object.values(sessions)) s.world.traceRoutes = on;
+    // replay the focus robot's next plan
+    shownTrace = null;
+  } else {
+    explainScan = on;
+    $("#pipe").hidden = !on;
+    scanCard.classList.toggle("wide", on);
+    scanShown = null;
+  }
+  $(`#explain-${kind}`).setAttribute("aria-pressed", String(on));
+}
+$("#explain-route").addEventListener("click", () => setExplain("route", !explainRoute));
+$("#explain-scan").addEventListener("click", () => setExplain("scan", !explainScan));
+
 // ---------------------------------------------------------------- frame
 
 let anatomyVisible = false;
@@ -366,11 +423,12 @@ function frame(now) {
   session.advance(dt, 10);
   const world = session.world;
   const focus = session.focus;
-  stage.draw(world, focus, { time: now / 1000, alpha: session.alpha });
+  stage.draw(world, focus, { time: now / 1000, alpha: session.alpha, now });
   showOrder(session);
   showLog(world);
   showScan(world, now);
   showSensors(focus);
+  showRoute(session, now);
   const k = motion.matches ? 1 : easeFactor(0.12, dt);
   if (anatomyVisible) anatomy.update(focus, k);
 
@@ -438,6 +496,7 @@ for (const n of ROBOT_COUNTS) {
   chip.setAttribute("aria-pressed", String(n === 3));
   chip.addEventListener("click", () => {
     sessions.dispatch.setRobots(n);
+    sessions.dispatch.world.traceRoutes = explainRoute;
     sessions.dispatch.speed = speed;
     logKey = "";
     say(`${n} robots, same warehouse`);
@@ -448,6 +507,7 @@ for (const n of ROBOT_COUNTS) {
 $("#new-floor").addEventListener("click", () => {
   const session = sessions[mode];
   session.reset(1 + Math.floor(Math.random() * 9999));
+  session.world.traceRoutes = explainRoute;
   session.speed = mode === "drive" ? 1 : speed;
   logKey = "";
   lastOrder = null;
@@ -552,13 +612,18 @@ fetch("scripts/results.json")
     if (!res) return;
     const fact = (name, text) => document.querySelectorAll(`[data-fact="${name}"]`).forEach((el) => (el.textContent = text));
     fact("seeds", String(res.seeds.length));
-    fact("solo", `${res.solo.perHour.toFixed(0)} packages an hour`);
-    fact("fleet", `${res.fleet.perHour.toFixed(0)} an hour, ${(res.fleet.perHour / res.solo.perHour).toFixed(1)}x`);
+    const solo = res.solo.cooperative;
+    const fleet = res.fleet.cooperative;
+    fact("solo", `${solo.perHour.toFixed(0)} packages an hour`);
+    fact("fleet", `${fleet.perHour.toFixed(0)} an hour, ${(fleet.perHour / solo.perHour).toFixed(1)}x`);
+    fact("trip", `${fleet.trip.toFixed(0)} s, ${res.fleet.simple.trip.toFixed(0)} s without`);
     fact("first", `${(res.firstTry * 100).toFixed(0)} %`);
     fact("corrected", `${res.corrected} in ${res.scans} scans`);
     fact("closest", res.closest >= 0.999 ? "never" : `${res.closest.toFixed(2)} m`);
   })
   .catch(() => {});
+
+new Lab($("#lab"), { motion });
 
 addEventListener("hashchange", () => switchMode(location.hash.slice(1)));
 setMode(location.hash.slice(1));

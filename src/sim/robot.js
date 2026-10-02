@@ -2,7 +2,7 @@
 // a mast with a fork that lifts and reaches, a 270° lidar and a label
 // scanner. Kinematics only, in SI units, one fixed step at a time.
 
-import { LEVELS, center } from "./warehouse.js";
+import { center } from "./warehouse.js";
 import { dirOf } from "./planner.js";
 import { BODY, FORK, sweep } from "./collide.js";
 
@@ -94,16 +94,6 @@ export class Robot {
     this.stage = -1;
     this.scan = null;
     this.manual = null;
-  }
-
-  get pose() {
-    return { x: this.x, y: this.y, h: this.h };
-  }
-
-  /** Where the fork tips are, for scanning and picking. */
-  get forkTip() {
-    const d = FORK.x1 + this.fork.reach * FORK.reach;
-    return { x: this.x + Math.cos(this.h) * d, y: this.y + Math.sin(this.h) * d };
   }
 
   /** A route, with the planned arrival and departure time at each cell. */
@@ -288,16 +278,6 @@ export class Robot {
     this.h = wrap(Math.atan2(d1[1], d1[0]) + (turn * u * Math.PI) / 2);
   }
 
-  /** Meters of straight path left before the next corner or the end. */
-  straightAhead() {
-    const path = this.path;
-    if (!path || this.i >= path.length - 1) return 0;
-    const d = dirOf(path[this.i], path[this.i + 1]);
-    let run = 1 - this.seg;
-    for (let j = this.i + 1; j < path.length - 1 && dirOf(path[j], path[j + 1]) === d; j++) run += 1;
-    return run;
-  }
-
   holds(cell) {
     return this.held.includes(cell);
   }
@@ -357,9 +337,5 @@ export class Robot {
     this.h = done.h;
     this.meters += moved;
     this.battery -= SPEC.battery.perMeter * moved;
-  }
-
-  forkHeightFor(level) {
-    return LEVELS[level];
   }
 }

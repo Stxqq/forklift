@@ -11,13 +11,39 @@
   ],
   "minutes": 30,
   "solo": {
-    "perHour": 45.75
+    "cooperative": {
+      "perHour": 58.25,
+      "trip": 50.973103619321286,
+      "missing": 9,
+      "wrong": 8,
+      "manual": 14
+    },
+    "simple": {
+      "perHour": 56.5,
+      "trip": 52.385940065681446,
+      "missing": 9,
+      "wrong": 11,
+      "manual": 13
+    }
   },
   "fleet": {
-    "perHour": 177.5
+    "cooperative": {
+      "perHour": 233.25,
+      "trip": 50.67917134833506,
+      "missing": 25,
+      "wrong": 19,
+      "manual": 47
+    },
+    "simple": {
+      "perHour": 226.25,
+      "trip": 54.50575931557375,
+      "missing": 24,
+      "wrong": 20,
+      "manual": 38
+    }
   },
-  "firstTry": 0.9316326530612244,
-  "scans": 1047,
-  "corrected": 712,
+  "firstTry": 0.9437060203283816,
+  "scans": 1351,
+  "corrected": 1091,
   "closest": 1
 }

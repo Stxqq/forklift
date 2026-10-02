@@ -3,6 +3,8 @@
 // safety field.
 
 import { SPEC } from "../sim/robot.js";
+import { FORK } from "../sim/collide.js";
+import { status } from "./robot.js";
 
 const NS = "http://www.w3.org/2000/svg";
 // ranges on a square-root scale, or a wall six meters off would run far
@@ -16,7 +18,9 @@ export class Anatomy {
     this.forks = root.querySelector("[data-forks]");
     this.load = root.querySelector("[data-load]");
     this.battery = root.querySelector("[data-battery]");
-    this.lamp = root.querySelector("[data-lamp]");
+    this.leds = [...root.querySelectorAll("[data-leds]")];
+    this.beacon = root.querySelector("[data-beacon]");
+    this.plate = root.querySelector("[data-plate]");
     this.field = root.querySelector("[data-field]");
     this.reach = 0;
     this.rays = [];
@@ -47,13 +51,19 @@ export class Anatomy {
       dot.style.opacity = d < SPEC.lidarRange - 0.01 ? "1" : "0";
     }
     this.reach += (robot.fork.reach - this.reach) * ease;
-    this.forks.setAttribute("transform", `translate(0 ${(-this.reach * 10).toFixed(2)})`);
+    // one SVG unit is a centimeter
+    const out = this.reach * FORK.reach * 100;
+    this.forks.setAttribute("transform", `translate(0 ${(-out).toFixed(2)})`);
     const lift = Math.max(0, robot.fork.height - SPEC.travelHeight) / SPEC.maxFork;
     this.load.style.opacity = robot.load ? "1" : "0";
-    this.load.setAttribute("transform", `translate(28 ${(14 - this.reach * 10).toFixed(2)}) scale(${(1 + lift * 0.18).toFixed(3)})`);
-    this.battery.setAttribute("width", (Math.max(0, robot.battery) * 22).toFixed(2));
+    this.load.setAttribute("transform", `translate(30 ${(48 - out).toFixed(2)}) scale(${(1 + lift * 0.14).toFixed(3)})`);
+    this.battery.setAttribute("width", (Math.max(0, robot.battery) * 14.8).toFixed(2));
     this.battery.style.fill = robot.battery < SPEC.battery.low ? "#ef4444" : "#16a34a";
-    this.lamp.style.fill = robot.safety === "stop" ? "#ef4444" : robot.safety === "slow" || robot.waiting ? "#f59e0b" : "#60a5fa";
+    const color = status(robot);
+    for (const led of this.leds) led.style.fill = color;
+    const moving = Math.abs(robot.v) > 0.05 || Math.abs(robot.w) > 0.05 || !!robot.waiting;
+    this.beacon.style.opacity = moving ? "1" : ".45";
+    this.plate.textContent = `R${robot.id + 1}`;
     this.field.dataset.state = robot.safety;
   }
 }

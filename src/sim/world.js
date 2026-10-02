@@ -5,9 +5,9 @@
 
 import { Rng, deriveSeed } from "./rng.js";
 import { Warehouse, W, CELL, LEVELS, center, key } from "./warehouse.js";
-import { TIME, dirFromHeading, planTimed, timesTo, walkPath } from "./planner.js";
+import { dirFromHeading, planTimed, timesTo, walkPath } from "./planner.js";
 import { Robot, SPEC, wrap } from "./robot.js";
-import { hit, sweep } from "./collide.js";
+import { sweep } from "./collide.js";
 import { OrderBook, parsePayload } from "./orders.js";
 import { decode, rasterize } from "./qr.js";
 
@@ -426,8 +426,15 @@ export class World {
     const ws = this.warehouse;
     const heading = dirFromHeading(r.h);
     let plan = null;
+    // the page can ask for the search itself, to replay it on the stage
+    const trace = this.traceRoutes ? [] : null;
     if (this.routing === "cooperative") {
-      plan = planTimed(ws, r.cell, goal, heading, { now: this.time, reserved: this.reservations(r), dwell });
+      const reserved = this.reservations(r);
+      plan = planTimed(ws, r.cell, goal, heading, { now: this.time, reserved, dwell, trace });
+      if (trace && plan) {
+        r.planTrace = trace;
+        r.planBooked = [...reserved].filter(([, list]) => list.some(([a, b]) => b > this.time && a < plan.eta + 5)).map(([c]) => c);
+      }
     }
     if (!plan) {
       // nominal times for the ETA, without anyone else on the floor

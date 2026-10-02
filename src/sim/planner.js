@@ -18,8 +18,6 @@ export const TIME = {
   turn90: 1.0,
   turn180: 1.7,
 };
-// kept for the tests that compare costs: one corner, in cells
-export const TURN_COST = TIME.arc / TIME.cell;
 
 const DIRS = [
   [1, 0],

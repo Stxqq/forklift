@@ -52,7 +52,6 @@ export class Warehouse {
     this.seed = seed;
     this.grid = new Uint8Array(W * H);
     this.exits = Array.from({ length: W * H }, () => []);
-    this.incoming = new Uint8Array(W * H);
     // the way each lane cell runs: [dx, dy] along its east–west lane and
     // its north–south lane (0 where it has none)
     this.flow = Array.from({ length: W * H }, () => ({ h: 0, v: 0 }));
@@ -157,10 +156,7 @@ export class Warehouse {
   link(a, b) {
     const t = this.grid[b];
     if (t !== CELL.LANE && t !== CELL.POCKET) return;
-    if (!this.exits[a].includes(b)) {
-      this.exits[a].push(b);
-      this.incoming[b]++;
-    }
+    if (!this.exits[a].includes(b)) this.exits[a].push(b);
   }
 
   /**
