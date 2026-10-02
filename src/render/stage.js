@@ -4,7 +4,7 @@
 // simulation stays DOM-free.
 
 import { W, H, CELL, LEVELS, cellX, cellY, center, key } from "../sim/warehouse.js";
-import { SPEC } from "../sim/robot.js";
+import { SPEC, wrap } from "../sim/robot.js";
 import { SCAN_TIME } from "../sim/world.js";
 
 const INK = "#111113";
@@ -14,12 +14,39 @@ const PLAN = "37,99,235";
 const AMBER = "#f59e0b";
 const RED = "#ef4444";
 const GREEN = "#16a34a";
-const BOX = "#e7cfa4";
-const BOX_EDGE = "#c9ab78";
+const BOX = "#eadbc0";
+const BOX_EDGE = "#cdb48a";
 const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
 const SANS = "InterVariable, Inter, -apple-system, system-ui, sans-serif";
 
 export const easeFactor = (rate, dt) => 1 - (1 - rate) ** (dt * 60);
+
+// the portfolio's --ease, cubic-bezier(.32, .72, 0, 1), for canvas motion
+export function portfolioEase(t) {
+  const x1 = 0.32, y1 = 0.72, x2 = 0, y2 = 1;
+  const bx = (u) => 3 * x1 * u * (1 - u) * (1 - u) + 3 * x2 * u * u * (1 - u) + u * u * u;
+  const by = (u) => 3 * y1 * u * (1 - u) * (1 - u) + 3 * y2 * u * u * (1 - u) + u * u * u;
+  let lo = 0, hi = 1;
+  for (let i = 0; i < 18; i++) {
+    const mid = (lo + hi) / 2;
+    if (bx(mid) < t) lo = mid;
+    else hi = mid;
+  }
+  return by((lo + hi) / 2);
+}
+
+/** Where something is drawn: between its last two sim steps. */
+function between(o, a) {
+  const p = o.prev;
+  if (!p) return o;
+  return {
+    x: p.x + (o.x - p.x) * a,
+    y: p.y + (o.y - p.y) * a,
+    h: p.h + wrap(o.h - p.h) * a,
+    fh: p.fh === undefined ? 0 : p.fh + (o.fork.height - p.fh) * a,
+    fr: p.fr === undefined ? 0 : p.fr + (o.fork.reach - p.fr) * a,
+  };
+}
 
 export class Stage {
   constructor(canvas) {
@@ -34,6 +61,7 @@ export class Stage {
     this.oy = 0;
     this.hover = -1;
     this.qr = new Map();
+    this.reducedMotion = false;
   }
 
   resize(insets = this.insets) {
@@ -66,7 +94,7 @@ export class Stage {
     return key(x, y);
   }
 
-  draw(world, focus, { time = 0 } = {}) {
+  draw(world, focus, { time = 0, alpha = 1 } = {}) {
     const { ctx, dpr } = this;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = TILE;
@@ -80,10 +108,11 @@ export class Stage {
     this.drawDocks(world);
     this.drawPockets(world);
     for (const r of world.robots) this.drawHeld(r, r === focus);
-    for (const r of world.robots) if (!r.manual) this.drawRoute(r, r === focus);
-    if (focus) this.drawLidar(focus);
-    for (const w of world.workers) this.drawWorker(w, time);
-    for (const r of world.robots) this.drawRobot(r, r === focus, world, time);
+    const views = new Map(world.robots.map((r) => [r, between(r, alpha)]));
+    for (const r of world.robots) if (!r.manual) this.drawRoute(r, views.get(r), r === focus);
+    if (focus) this.drawLidar(focus, views.get(focus));
+    for (const w of world.workers) this.drawWorker(w, between(w, alpha), time);
+    for (const r of world.robots) this.drawRobot(r, views.get(r), r === focus, world, time);
     this.drawLabels(ws);
   }
 
@@ -247,13 +276,6 @@ export class Stage {
       const x = cellX(bay.cell);
       const y = cellY(bay.cell);
       if (bay.pkg) this.drawBox(bay.pkg, x + 0.5, y + 0.5, 0.62);
-      // shelf level, as one to three ticks on the aisle side
-      const level = bay.pkg ? bay.pkg.level : -1;
-      if (level >= 0) {
-        ctx.fillStyle = "rgba(17,17,19,.28)";
-        const edge = bay.facing > 0 ? y + 0.06 : y + 0.88;
-        for (let i = 0; i <= level; i++) ctx.fillRect(x + 0.08 + i * 0.1, edge, 0.06, 0.06);
-      }
       if (bay.expected && !bay.pkg && !bay.reserved) {
         // the records say something is here
         ctx.setLineDash([0.08, 0.08]);
@@ -327,15 +349,21 @@ export class Stage {
     for (const c of r.held) ctx.fillRect(cellX(c) + 0.06, cellY(c) + 0.06, 0.88, 0.88);
   }
 
-  drawRoute(r, focused) {
+  drawRoute(r, v, focused) {
     const path = r.path;
     if (!path || r.i >= path.length - 1 || !/^to/.test(r.phase)) return;
     const ctx = this.ctx;
     ctx.beginPath();
-    ctx.moveTo(r.x, r.y);
+    ctx.moveTo(v.x, v.y);
+    // round the corners the way the robot drives them
     for (let j = r.i + 1; j < path.length; j++) {
       const c = center(path[j]);
-      ctx.lineTo(c.x, c.y);
+      if (j < path.length - 1) {
+        const n = center(path[j + 1]);
+        ctx.arcTo(c.x, c.y, n.x, n.y, 0.5);
+      } else {
+        ctx.lineTo(c.x, c.y);
+      }
     }
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
@@ -349,46 +377,46 @@ export class Stage {
     ctx.fill();
   }
 
-  drawLidar(r) {
+  drawLidar(r, v) {
     const ctx = this.ctx;
     const n = SPEC.lidarRays;
     ctx.beginPath();
     for (let k = 0; k < n; k++) {
-      const a = r.h - SPEC.lidarFov / 2 + (SPEC.lidarFov * k) / (n - 1);
+      const a = v.h - SPEC.lidarFov / 2 + (SPEC.lidarFov * k) / (n - 1);
       const d = r.lidar[k];
-      const x = r.x + Math.cos(a) * d;
-      const y = r.y + Math.sin(a) * d;
-      if (k === 0) ctx.moveTo(r.x, r.y);
+      const x = v.x + Math.cos(a) * d;
+      const y = v.y + Math.sin(a) * d;
+      if (k === 0) ctx.moveTo(v.x, v.y);
       ctx.lineTo(x, y);
     }
     ctx.closePath();
-    ctx.fillStyle = "rgba(17,17,19,.035)";
+    ctx.fillStyle = "rgba(37,99,235,.035)";
     ctx.fill();
     ctx.fillStyle = "rgba(17,17,19,.4)";
     for (let k = 0; k < n; k++) {
       const d = r.lidar[k];
       if (d >= SPEC.lidarRange - 0.01) continue;
-      const a = r.h - SPEC.lidarFov / 2 + (SPEC.lidarFov * k) / (n - 1);
-      ctx.fillRect(r.x + Math.cos(a) * d - 0.025, r.y + Math.sin(a) * d - 0.025, 0.05, 0.05);
+      const a = v.h - SPEC.lidarFov / 2 + (SPEC.lidarFov * k) / (n - 1);
+      ctx.fillRect(v.x + Math.cos(a) * d - 0.025, v.y + Math.sin(a) * d - 0.025, 0.05, 0.05);
     }
     // the safety field: amber while slowing, red while stopped
     if (r.safety !== "clear") {
       ctx.fillStyle = r.safety === "stop" ? "rgba(239,68,68,.16)" : "rgba(245,158,11,.14)";
       ctx.beginPath();
-      ctx.moveTo(r.x, r.y);
-      ctx.arc(r.x, r.y, r.safety === "stop" ? SPEC.stop : SPEC.slow * 0.7, r.h - 0.5, r.h + 0.5);
+      ctx.moveTo(v.x, v.y);
+      ctx.arc(v.x, v.y, r.safety === "stop" ? SPEC.stop : SPEC.slow * 0.7, v.h - 0.5, v.h + 0.5);
       ctx.closePath();
       ctx.fill();
     }
   }
 
-  drawWorker(w, time) {
+  drawWorker(w, v, time) {
     const ctx = this.ctx;
     ctx.save();
-    ctx.translate(w.x, w.y);
-    ctx.rotate(w.h);
+    ctx.translate(v.x, v.y);
+    ctx.rotate(v.h);
     // a step cycle: the shoulders sway a little while walking
-    const sway = w.moving ? Math.sin(time * 9 + w.id) * 0.03 : 0;
+    const sway = w.moving && !this.reducedMotion ? Math.sin(time * 9 + w.id) * 0.025 : 0;
     ctx.fillStyle = "rgba(0,0,0,.08)";
     ctx.beginPath();
     ctx.ellipse(0.03, 0.04, 0.2, 0.26, 0, 0, Math.PI * 2);
@@ -408,20 +436,20 @@ export class Stage {
       ctx.strokeStyle = "rgba(245,158,11,.6)";
       ctx.lineWidth = 1.2 * this.px;
       ctx.beginPath();
-      ctx.arc(w.x, w.y, 0.34, 0, Math.PI * 2);
+      ctx.arc(v.x, v.y, 0.34, 0, Math.PI * 2);
       ctx.stroke();
     }
   }
 
-  drawRobot(r, focused, world, time) {
+  drawRobot(r, v, focused, world, time) {
     const ctx = this.ctx;
     const L = SPEC.length;
     const Wd = SPEC.width;
     const fork = SPEC.forkLength;
-    const reach = r.fork.reach * 0.32;
+    const reach = v.fr * 0.32;
     ctx.save();
-    ctx.translate(r.x, r.y);
-    ctx.rotate(r.h);
+    ctx.translate(v.x, v.y);
+    ctx.rotate(v.h);
     // shadow
     ctx.fillStyle = "rgba(0,0,0,.14)";
     roundRect(ctx, -L / 2 + 0.03, -Wd / 2 + 0.05, L, Wd, 0.12);
@@ -454,47 +482,46 @@ export class Stage {
     ctx.beginPath();
     ctx.arc(-L / 2 + 0.1, -Wd / 2 + 0.1, 0.045, 0, Math.PI * 2);
     ctx.fill();
-    // number
-    ctx.rotate(-r.h);
-    ctx.fillStyle = "rgba(255,255,255,.88)";
-    ctx.font = `700 ${0.2}px ${SANS}`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
     ctx.restore();
 
     if (r.load) {
       const d = L / 2 + reach + fork * 0.55;
-      const lift = Math.max(0, r.fork.height - SPEC.travelHeight) / SPEC.maxFork;
-      this.drawBox(r.load, r.x + Math.cos(r.h) * d, r.y + Math.sin(r.h) * d, 0.5, r.h + Math.PI / 2, lift);
+      const lift = Math.max(0, v.fh - SPEC.travelHeight) / SPEC.maxFork;
+      this.drawBox(r.load, v.x + Math.cos(v.h) * d, v.y + Math.sin(v.h) * d, 0.42, v.h + Math.PI / 2, lift);
     }
-    if (/scan/i.test(r.phase) && r.timer < SCAN_TIME && r.load) this.drawLaser(r, time);
+    if (/scan/i.test(r.phase) && r.timer < SCAN_TIME && r.load) this.drawLaser(r, v);
     if (world.robots.length > 1 || focused) {
       ctx.save();
       ctx.fillStyle = focused ? INK : "rgba(17,17,19,.55)";
       ctx.font = `700 ${0.26}px ${SANS}`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(String(r.id + 1), r.x - Math.cos(r.h) * 0.62, r.y - Math.sin(r.h) * 0.62);
+      ctx.fillText(String(r.id + 1), v.x - Math.cos(v.h) * 0.6, v.y - Math.sin(v.h) * 0.6);
       ctx.restore();
     }
   }
 
-  drawLaser(r, time) {
+  drawLaser(r, v) {
     const ctx = this.ctx;
     const L = SPEC.length;
-    const d = L / 2 + r.fork.reach * 0.32 + SPEC.forkLength * 0.55;
-    const cx = r.x + Math.cos(r.h) * d;
-    const cy = r.y + Math.sin(r.h) * d;
-    const sweep = Math.sin(time * 14) * 0.2;
-    const nx = -Math.sin(r.h);
-    const ny = Math.cos(r.h);
-    const ox = r.x + Math.cos(r.h) * (L / 2 - 0.12);
-    const oy = r.y + Math.sin(r.h) * (L / 2 - 0.12);
-    const ax = cx + nx * 0.25 + Math.cos(r.h) * sweep;
-    const ay = cy + ny * 0.25 + Math.sin(r.h) * sweep;
-    const bx = cx - nx * 0.25 + Math.cos(r.h) * sweep;
-    const by = cy - ny * 0.25 + Math.sin(r.h) * sweep;
-    ctx.fillStyle = "rgba(239,68,68,.12)";
+    const d = L / 2 + v.fr * 0.32 + SPEC.forkLength * 0.55;
+    const c = Math.cos(v.h);
+    const sn = Math.sin(v.h);
+    const cx = v.x + c * d;
+    const cy = v.y + sn * d;
+    // one sweep across the label per scan, on the portfolio's easing curve
+    const t = Math.min(1, r.timer / SCAN_TIME);
+    const phase = this.reducedMotion ? 0.5 : t < 0.5 ? portfolioEase(t * 2) : 1 - portfolioEase((t - 0.5) * 2);
+    const sweep = (phase - 0.5) * 0.36;
+    const nx = -sn;
+    const ny = c;
+    const ox = v.x + c * (L / 2 - 0.12);
+    const oy = v.y + sn * (L / 2 - 0.12);
+    const ax = cx + nx * 0.22 + c * sweep;
+    const ay = cy + ny * 0.22 + sn * sweep;
+    const bx = cx - nx * 0.22 + c * sweep;
+    const by = cy - ny * 0.22 + sn * sweep;
+    ctx.fillStyle = "rgba(239,68,68,.1)";
     ctx.beginPath();
     ctx.moveTo(ox, oy);
     ctx.lineTo(ax, ay);
@@ -503,6 +530,7 @@ export class Stage {
     ctx.fill();
     ctx.strokeStyle = RED;
     ctx.lineWidth = 2 * this.px;
+    ctx.lineCap = "round";
     ctx.beginPath();
     ctx.moveTo(ax, ay);
     ctx.lineTo(bx, by);

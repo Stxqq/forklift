@@ -15,6 +15,7 @@ class Session {
     this.speed = 1;
     this.pending = 0;
     this.focusId = 0;
+    this.alpha = 1;
     this.reset(seed);
   }
 
@@ -42,6 +43,9 @@ class Session {
       this.world.step();
       this.pending -= DT;
     }
+    // how far the clock is between the last step and the next one, so the
+    // page can draw in between: smooth at any refresh rate and any speed
+    this.alpha = Math.min(1, this.pending / DT);
     const notices = this.world.notices;
     while (notices.length) this.say(notices.shift().text);
   }

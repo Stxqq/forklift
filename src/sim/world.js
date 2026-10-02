@@ -56,11 +56,17 @@ export class Traffic {
     return true;
   }
 
+  /**
+   * Hand back the cells behind a robot, but only once its center is a
+   * full cell away from them, so whoever moves in next can't touch it,
+   * even while it is still swinging round a corner.
+   */
   releaseBehind(robot) {
     const keep = [];
     for (const c of robot.held) {
       const at = robot.path.indexOf(c);
-      if (at >= 0 && at < robot.i) {
+      const p = center(c);
+      if (at >= 0 && at < robot.i && Math.hypot(robot.x - p.x, robot.y - p.y) >= 0.999) {
         if (this.owner[c] === robot.id) this.owner[c] = -1;
       } else {
         keep.push(c);
@@ -92,6 +98,7 @@ class Worker {
     this.speed = rng.range(1.0, 1.3);
     this.pause = rng.range(0, 3);
     this.held = [];
+    this.prev = { x: this.x, y: this.y, h: this.h };
     this.waiting = false;
     this.moving = false;
   }
@@ -182,6 +189,20 @@ export class World {
   step() {
     const dt = DT;
     this.time = ++this.steps * DT;
+    // the state before this step, for drawing between steps
+    for (const r of this.robots) {
+      const p = r.prev;
+      p.x = r.x;
+      p.y = r.y;
+      p.h = r.h;
+      p.fh = r.fork.height;
+      p.fr = r.fork.reach;
+    }
+    for (const w of this.workers) {
+      w.prev.x = w.x;
+      w.prev.y = w.y;
+      w.prev.h = w.h;
+    }
     for (const w of this.workers) this.stepWorker(w, dt);
     for (const r of this.robots) {
       const limit = this.safety(r);
@@ -210,35 +231,40 @@ export class World {
     if (this.mode !== "dispatch") this.topUpOrders();
   }
 
-  /** The safety field: how fast a robot may go given who's in front of it. */
+  /**
+   * The safety field: how fast a robot may go given who's in front of it.
+   * A robot on a route watches the stretch of route ahead of it, bends
+   * included; one driven by hand watches straight ahead.
+   */
   safety(r) {
     let limit = 1;
     let state = "clear";
-    if (r.v < -0.01) return 1;
-    const c = Math.cos(r.h);
-    const s = Math.sin(r.h);
-    // a robot about to turn only watches the stretch it will really drive
-    const reach = r.manual ? SPEC.slow : Math.min(SPEC.slow, r.straightAhead() + 0.7);
+    if (r.v < -0.01) {
+      r.safety = state;
+      return 1;
+    }
+    const ahead = this.lookahead(r);
     for (const w of this.workers) {
-      const dx = w.x - r.x;
-      const dy = w.y - r.y;
-      const fwd = dx * c + dy * s;
-      const lat = -dx * s + dy * c;
-      if (fwd <= 0 || fwd > reach || Math.abs(lat) > 0.95) continue;
-      if (fwd < SPEC.stop && Math.abs(lat) < SPEC.corridor) {
-        limit = 0;
-        state = "stop";
-      } else {
-        limit = Math.min(limit, 0.3 + (0.7 * (fwd - SPEC.stop)) / (SPEC.slow - SPEC.stop));
-        if (state === "clear") state = "slow";
+      for (const [px, py, s] of ahead) {
+        const d = Math.hypot(w.x - px, w.y - py);
+        if (d > 0.95) continue;
+        if (s < SPEC.stop && d < SPEC.corridor) {
+          limit = 0;
+          state = "stop";
+        } else {
+          limit = Math.min(limit, 0.3 + (0.7 * Math.max(0, s - SPEC.stop)) / (SPEC.slow - SPEC.stop));
+          if (state === "clear") state = "slow";
+        }
       }
     }
+    const c = Math.cos(r.h);
+    const sn = Math.sin(r.h);
     for (const o of this.robots) {
       if (o === r) continue;
       const dx = o.x - r.x;
       const dy = o.y - r.y;
-      const fwd = dx * c + dy * s;
-      const lat = -dx * s + dy * c;
+      const fwd = dx * c + dy * sn;
+      const lat = -dx * sn + dy * c;
       if (fwd > 0 && fwd < 0.85 && Math.abs(lat) < 0.6) {
         limit = 0;
         state = "stop";
@@ -246,6 +272,29 @@ export class World {
     }
     r.safety = state;
     return Math.max(0, limit);
+  }
+
+  /** Points along where the robot is about to drive, with the distance to each. */
+  lookahead(r) {
+    const pts = [];
+    const step = 0.25;
+    if (r.manual) {
+      for (let s = 0.3; s <= SPEC.slow; s += step) pts.push([r.x + Math.cos(r.h) * s, r.y + Math.sin(r.h) * s, s]);
+      return pts;
+    }
+    if (!r.path || r.i >= r.path.length - 1 || !/^to/.test(r.phase)) return pts;
+    let px = r.x;
+    let py = r.y;
+    let s = 0;
+    for (let j = r.i + 1; j < r.path.length && s < SPEC.slow; j++) {
+      const c = center(r.path[j]);
+      const len = Math.hypot(c.x - px, c.y - py);
+      for (let t = step; t <= len && s + t <= SPEC.slow; t += step) pts.push([px + ((c.x - px) * t) / len, py + ((c.y - py) * t) / len, s + t]);
+      s += len;
+      px = c.x;
+      py = c.y;
+    }
+    return pts;
   }
 
   scanLidar(r) {

@@ -11,13 +11,13 @@
   ],
   "minutes": 30,
   "solo": {
-    "perHour": 44
+    "perHour": 45.75
   },
   "fleet": {
-    "perHour": 170
+    "perHour": 177.5
   },
-  "firstTry": 0.9341126461211477,
-  "scans": 1003,
-  "corrected": 719,
+  "firstTry": 0.9316326530612244,
+  "scans": 1047,
+  "corrected": 712,
   "closest": 1
 }

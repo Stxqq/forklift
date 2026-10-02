@@ -479,7 +479,7 @@ a.f-value:hover { color: var(--ink); }
   background: #ef4444; box-shadow: 0 0 10px 2px rgba(239, 68, 68, .45);
   opacity: 0;
 }
-.scan-card[data-state="reading"] .scan-laser { opacity: 1; animation: laser .9s ease-in-out infinite alternate; }
+.scan-card[data-state="reading"] .scan-laser { opacity: 1; animation: laser .9s var(--ease) infinite alternate; }
 @keyframes laser { from { top: 8%; } to { top: 92%; } }
 .scan-text { margin-top: 9px; font: 600 11px/1.4 var(--mono); }
 .scan-card[data-state="ok"] .scan-text::before { content: "✓ "; color: #16a34a; font-weight: 800; }

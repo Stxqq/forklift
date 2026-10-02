@@ -57,7 +57,9 @@ const create = {
 };
 let mode = null;
 // handy from the console: forklift.sessions.watch.world
-window.forklift = { sessions };
+// and how long each frame's work took, in ms (the last 600 frames)
+const perf = { work: new Float32Array(600), n: 0 };
+window.forklift = { sessions, perf };
 
 function markPill(name) {
   const links = [...document.querySelectorAll(".pill-btn")];
@@ -119,6 +121,7 @@ const orderRobot = $("#order-robot");
 const orderNext = $("#order-next");
 let lastOrder = null;
 let orderKey = "";
+let shownOrderId = null;
 
 function showOrder(session) {
   const world = session.world;
@@ -143,6 +146,11 @@ function showOrder(session) {
   const key = shown ? `${shown.order.id}:${stageNow}:${status}:${robot.waiting?.kind ?? ""}:${robot.safety}` : `none:${doing}`;
   if (key !== orderKey) {
     orderKey = key;
+    const id = shown ? shown.order.id : null;
+    if (id !== shownOrderId && !motion.matches) {
+      for (const el of [orderPkg, orderRoute]) el.animate([{ opacity: 0, transform: "translateY(4px)" }, { opacity: 1, transform: "none" }], { duration: 380, easing: EASE });
+    }
+    shownOrderId = id;
     if (shown) {
       const o = shown.order;
       orderTitle.textContent = `Order ${o.id}`;
@@ -347,6 +355,7 @@ const caption = $("#caption-sub");
 let last = performance.now();
 let raf = 0;
 function frame(now) {
+  const started = performance.now();
   const dt = Math.min((now - last) / 1000, 0.1);
   last = now;
   const session = sessions[mode];
@@ -354,7 +363,7 @@ function frame(now) {
   session.advance(dt, 10);
   const world = session.world;
   const focus = session.focus;
-  stage.draw(world, focus, { time: now / 1000 });
+  stage.draw(world, focus, { time: now / 1000, alpha: session.alpha });
   showOrder(session);
   showLog(world);
   showScan(world, now);
@@ -373,6 +382,7 @@ function frame(now) {
   const text = `Seed ${world.seed} · ${robots} robot${robots > 1 ? "s" : ""} · ${world.workers.length} people on foot · ${clock(world.time)}`;
   if (caption.textContent !== text) caption.textContent = text;
   stageEl.dataset.ready = "";
+  perf.work[perf.n++ % perf.work.length] = performance.now() - started;
   raf = requestAnimationFrame(frame);
 }
 
@@ -385,6 +395,9 @@ function resize() {
 }
 new ResizeObserver(() => resize()).observe(canvas);
 new ResizeObserver(() => resize()).observe($("#hud-row"));
+
+stage.reducedMotion = motion.matches;
+motion.addEventListener("change", () => (stage.reducedMotion = motion.matches));
 
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
