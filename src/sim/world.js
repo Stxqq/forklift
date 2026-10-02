@@ -1020,10 +1020,11 @@ export class World {
 
   /** Orders shown in the log: newest first. */
   log(limit = 8) {
+    const last = (o) => o.finished ?? o.started;
     return this.book.orders
       .filter((o) => o.started !== null || o.finished !== null)
-      .slice(-limit)
-      .reverse()
+      .sort((a, b) => last(b) - last(a) || b.id - a.id)
+      .slice(0, limit)
       .map((o) => ({ order: o, status: this.book.status(o) }));
   }
 }

@@ -405,8 +405,8 @@ export class Lab {
     }).join("");
     const limit = Math.floor(this.e.ecPerBlock / 2);
     const head = res.ok
-      ? `<b class="ok">✓ ${escape(res.text)}</b><span>${res.corrected ? `Reed–Solomon fixed ${res.corrected} codeword${res.corrected === 1 ? "" : "s"}.` : "Read clean, nothing to fix."} This level fixes up to ${limit}${this.e.blocks.length > 1 ? " per block" : ""}.</span>`
-      : `<b class="bad">✗ ${res.reason === "too damaged to correct" ? "Too damaged" : escape(res.reason)}</b><span>${res.wrong.size} codeword${res.wrong.size === 1 ? "" : "s"} wrong; this level fixes up to ${limit}${this.e.blocks.length > 1 ? " per block" : ""}.</span>`;
+      ? `<b class="ok">✓ ${escape(res.text)}</b><span>${res.corrected ? `Reed–Solomon fixed ${res.corrected} codeword${res.corrected === 1 ? "" : "s"}.` : "Read clean, nothing to fix."} Up to ${limit}${this.e.blocks.length > 1 ? " per block" : ""} can be fixed at this level.</span>`
+      : `<b class="bad">✗ ${res.reason === "too damaged to correct" ? "Too damaged" : escape(res.reason)}</b><span>${res.wrong.size} codeword${res.wrong.size === 1 ? "" : "s"} wrong; up to ${limit}${this.e.blocks.length > 1 ? " per block" : ""} can be fixed at this level.</span>`;
     this.result.innerHTML = `<p class="lab-verdict">${head}</p><div class="cw-map" aria-label="Codewords: fixed ones in blue, unrecoverable in red">${cells}</div><p class="legend"><i style="background:#e4e4e7"></i><span>read fine</span><i style="background:${BLUE}"></i><span>fixed</span><i style="background:#ef4444"></i><span>wrong, not fixed</span></p>`;
   }
 

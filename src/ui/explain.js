@@ -86,7 +86,7 @@ export function drawPipeline(root, scan) {
   paint(canvases[0], (i) => image.data[i]);
   const th = info?.threshold ?? 128;
   paint(canvases[1], (i) => (image.data[i] < th ? 17 : 255));
-  caps[1].textContent = `Threshold ${Math.round(th)}`;
+  caps[1].textContent = `Cut at ${Math.round(th)}`;
   const g = paint(canvases[2], (i) => (image.data[i] < th ? 17 : 255));
   if (info) {
     const { x, y, w: bw } = info.box;
@@ -95,7 +95,7 @@ export function drawPipeline(root, scan) {
     g.strokeStyle = `rgb(${BLUE})`;
     g.lineWidth = 2;
     for (const [fx, fy] of [[0, 0], [n - 7, 0], [0, n - 7]]) g.strokeRect(x + fx * m, y + fy * m, 7 * m, 7 * m);
-    caps[2].textContent = `Version ${info.version}, ${n}×${n}`;
+    caps[2].textContent = `v${info.version} · ${n}×${n}`;
   } else caps[2].textContent = "No code found";
   const c3 = canvases[3];
   c3.width = c3.height = w;
@@ -117,7 +117,7 @@ export function drawPipeline(root, scan) {
       g3.lineTo((n + 1) * m, (k + 1) * m);
       g3.stroke();
     }
-    caps[3].textContent = `Level ${info.level}, mask ${info.mask}`;
+    caps[3].textContent = `${info.level} · mask ${info.mask}`;
   } else caps[3].textContent = "–";
   const out = root.querySelector(".pipe-bytes");
   if (result.ok) {

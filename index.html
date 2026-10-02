@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Forklift</title>
-  <meta name="description" content="A forklift robot works a warehouse in your browser: it plans a route, lifts a package from its bay, really decodes the QR label from pixels and logs whether it arrived. Watch it, dispatch a small fleet, or drive it yourself.">
+  <meta name="description" content="Forklift robots work a warehouse in your browser: they plan the quickest routes around each other, lift packages from their bays, really decode each QR label from pixels and log whether it arrived. Watch, dispatch a fleet, drive one, or build a label yourself.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://stxqq.github.io/forklift/">
   <meta property="og:title" content="Forklift">
-  <meta property="og:description" content="A forklift robot works a warehouse in your browser: it plans a route, lifts a package from its bay, really decodes the QR label from pixels and logs whether it arrived.">
+  <meta property="og:description" content="Forklift robots work a warehouse in your browser: they plan the quickest routes around each other, lift packages, really decode each QR label from pixels and log whether it arrived.">
   <meta property="og:image" content="https://stxqq.github.io/forklift/social.png">
   <meta property="og:image:width" content="1280">
   <meta property="og:image:height" content="640">
@@ -37,11 +37,11 @@
     <section class="intro rise">
       <h1 class="dear">Forklift</h1>
       <p class="gray">
-        A small forklift robot works a warehouse. It plans a route down the
-        one-way aisles, lifts a package out of its bay, reads the QR label
-        and drops it at the right dock, and a delivery log checks every
-        step against the order. The scan is real: the label is decoded from
-        pixels, smudges and all. Watch it, dispatch a few, or drive one.
+        Small forklift robots work a warehouse. They plan the quickest way
+        around each other, lift a package out of its bay, read the QR label
+        and drop it at the right dock, and a delivery log checks every step
+        against the order. The scan is real: the label is decoded from
+        pixels, smudges and all. Watch one, dispatch a few, or drive one.
       </p>
     </section>
 
@@ -100,7 +100,7 @@
             <div class="card plan-card" id="plan-card" hidden>
               <div class="card-head"><b>Reservations</b><em id="plan-note">who holds which cell, when</em></div>
               <canvas class="timeline" id="timeline" aria-label="Each robot's booked cells over the next seconds"></canvas>
-              <p class="legend"><i style="background:#2563eb"></i><span>driving</span><i style="background:#f59e0b"></i><span>planned wait</span><i style="background:rgba(17,17,19,.2)"></i><span>at the bay or dock</span></p>
+              <p class="legend"><i style="background:#2563eb"></i><span>driving</span><i style="background:#f59e0b"></i><span>waiting</span><i style="background:rgba(17,17,19,.2)"></i><span>at a bay or dock</span></p>
             </div>
 
             <div class="card log-card">
@@ -266,7 +266,7 @@
               <div class="anno-label"><em>04</em><b>Lidar &amp; drive</b><span>270°, 6&nbsp;m · 1.5&nbsp;m/s</span></div>
             </div>
             <div class="anno-item anno-left" style="top: 86%">
-              <div class="anno-label"><em>05</em><b>Beacon &amp; e-stop</b><span>Lit while it moves</span></div>
+              <div class="anno-label"><em>05</em><b>Beacon, e-stop</b><span>Lit while it moves</span></div>
               <i class="anno-line"></i><i class="anno-dot"></i>
             </div>
             <div class="anno-item anno-right" style="top: 95%">
@@ -335,7 +335,7 @@
               <button type="button" id="lab-svg">SVG</button>
               <button type="button" id="lab-print">Print label</button>
             </div>
-            <p class="hint">A phone camera reads these. The same codes pass Apple's Vision framework in the project's check script.</p>
+            <p class="hint">Phone cameras should read these: the same codes pass Apple's Vision framework in the project's check script.</p>
           </div>
         </div>
       </div>

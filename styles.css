@@ -247,7 +247,7 @@ kbd {
 .anno-right { left: 100%; }
 .anno-label {
   display: grid; grid-template-columns: auto 1fr; column-gap: 6px; row-gap: 1px;
-  width: 116px; align-items: baseline;
+  width: 124px; align-items: baseline;
   opacity: 0; transform: translateY(3px);
   transition: opacity .3s var(--ease), transform .45s var(--ease);
 }
@@ -261,7 +261,7 @@ kbd {
 .anno-left .anno-label em { grid-column: 2; }
 .anno-left .anno-label b, .anno-left .anno-label span { grid-column: 1; }
 .anno-line {
-  display: block; flex: none; width: 26px; height: 1px; margin: 0 6px;
+  display: block; flex: none; width: 22px; height: 1px; margin: 0 6px;
   background: #cfcfd6;
   transform: scaleX(0);
   transition: transform .45s var(--ease);
@@ -521,6 +521,8 @@ a.f-value:hover { color: var(--ink); }
 .pipe-bytes span { color: var(--gray); font-size: 10px; }
 .pipe-bytes .bad { color: #b91c1c; }
 .scan-card.wide { width: 300px; }
+/* with the pipeline open, its first frame is the camera image */
+.scan-card.wide .scan-view { display: none; }
 .controls .chips .chip { padding: 5px 10px; }
 
 /* ---- label lab ---- */
