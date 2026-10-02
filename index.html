@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Forklift</title>
+  <meta name="description" content="A forklift robot works a warehouse in your browser: it plans a route, lifts a package from its bay, really decodes the QR label from pixels and logs whether it arrived. Watch it, dispatch a small fleet, or drive it yourself.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://stxqq.github.io/forklift/">
+  <meta property="og:title" content="Forklift">
+  <meta property="og:description" content="A forklift robot works a warehouse in your browser: it plans a route, lifts a package from its bay, really decodes the QR label from pixels and logs whether it arrived.">
+  <meta property="og:image" content="https://stxqq.github.io/forklift/social.png">
+  <meta property="og:image:width" content="1280">
+  <meta property="og:image:height" content="640">
+  <meta property="og:image:alt" content="A top-down warehouse with racks of boxes, a black forklift robot following a blue route, and a scan card showing a decoded QR label">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Forklift">
+  <meta name="twitter:description" content="A warehouse robot that lifts packages, decodes their QR labels from pixels and logs whether each one arrived.">
+  <meta name="twitter:image" content="https://stxqq.github.io/forklift/social.png">
+  <link rel="canonical" href="https://stxqq.github.io/forklift/">
+  <meta name="theme-color" content="#ffffff">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M9 3v21h18' fill='none' stroke='%23111113' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Crect x='14' y='11' width='10' height='9' rx='1.5' fill='%23111113'/%3E%3Ccircle cx='9' cy='28' r='2' fill='%23111113'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://rsms.me/">
+  <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="src/ui/app.js"></script>
+</head>
+<body>
+  <nav class="pill" id="pill" aria-label="Mode">
+    <span class="pill-ind" aria-hidden="true"></span>
+    <a class="pill-btn" href="#watch" data-mode="watch">Watch</a>
+    <a class="pill-btn" href="#dispatch" data-mode="dispatch">Dispatch</a>
+    <a class="pill-btn" href="#drive" data-mode="drive">Drive</a>
+  </nav>
+
+  <main>
+    <section class="intro rise">
+      <h1 class="dear">Forklift</h1>
+      <p class="gray">
+        A small forklift robot works a warehouse. It plans a route down the
+        one-way aisles, lifts a package out of its bay, reads the QR label
+        and drops it at the right dock, and a delivery log checks every
+        step against the order. The scan is real: the label is decoded from
+        pixels, smudges and all. Watch it, dispatch a few, or drive one.
+      </p>
+    </section>
+
+    <section class="bench rise" aria-label="Simulation">
+      <div class="stage" id="stage" data-mode="watch">
+        <div class="view">
+          <canvas class="floor" id="floor" role="img" aria-label="Top-down view of the warehouse: racks, aisles, docks, robots and people"></canvas>
+          <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+          <div class="scan-card" id="scan" aria-live="polite" hidden>
+            <div class="card-head"><b>Scan</b><em id="scan-attempt">attempt 1</em></div>
+            <div class="scan-view">
+              <canvas id="scan-image" width="124" height="124" aria-label="What the scanner sees"></canvas>
+              <i class="scan-laser" aria-hidden="true"></i>
+            </div>
+            <p class="scan-text" id="scan-text">Reading…</p>
+            <p class="scan-meta" id="scan-meta"></p>
+          </div>
+
+          <div class="touch" aria-label="Driving controls">
+            <div class="touch-pair">
+              <button type="button" data-control="left" aria-label="Turn left"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></button>
+              <button type="button" data-control="right" aria-label="Turn right"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></button>
+            </div>
+            <div class="touch-pair">
+              <button type="button" data-action="fork" aria-label="Fork up or down" class="word">Fork</button>
+              <button type="button" data-action="scan" aria-label="Scan the label" class="word">Scan</button>
+            </div>
+            <div class="touch-pair">
+              <button type="button" data-control="back" aria-label="Reverse"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+              <button type="button" data-control="forward" aria-label="Forward"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></button>
+            </div>
+          </div>
+        </div>
+
+        <div class="hud">
+          <div class="hud-col">
+            <div class="card order-card">
+              <div class="card-head"><b id="order-title">Order</b><em id="order-robot">Robot 1</em></div>
+              <p class="order-pkg" id="order-pkg">–</p>
+              <p class="order-route" id="order-route">Waiting for an order</p>
+              <ol class="pipeline" id="pipeline">
+                <li>Drive</li><li>Pick up</li><li>Scan</li><li>Deliver</li><li>Confirmed</li>
+              </ol>
+              <p class="order-next" id="order-next"></p>
+            </div>
+
+            <div class="card log-card">
+              <div class="card-head"><b>Delivery log</b><em id="log-note">0 arrived</em></div>
+              <ol class="log" id="log"></ol>
+              <p class="log-empty" id="log-empty">Nothing delivered yet</p>
+            </div>
+          </div>
+
+          <div class="hud-row" id="hud-row">
+            <div class="card stats">
+              <div class="stat"><small>Packages</small><p><b id="rate">0</b><span>/ h</span></p></div>
+              <div class="stat"><small>Driven</small><p><b id="meters">0</b><span>m</span></p></div>
+              <div class="stat"><small>Battery</small><p><b id="battery">0</b><span>%</span></p></div>
+              <div class="stat"><small>Failed scans</small><p><b id="failed">0</b><span id="failed-of">/ 0</span></p></div>
+            </div>
+
+            <div class="card sensors">
+              <div class="card-head"><b>Sensors</b><em id="safety">clear</em></div>
+              <div class="sensor-body">
+                <canvas class="lidar" id="lidar" width="120" height="120" aria-label="Lidar returns around the robot"></canvas>
+                <div class="gauges">
+                  <div class="gauge"><small>Fork</small><span class="bar"><i id="fork-bar"></i></span><em id="fork">0.10 m</em></div>
+                  <div class="gauge"><small>Load</small><span class="bar"><i id="load-bar"></i></span><em id="load">0 kg</em></div>
+                  <div class="gauge"><small>Nearest</small><span class="bar"><i id="near-bar"></i></span><em id="near">6.0 m</em></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card controls">
+              <div class="ctl not-drive">
+                <small>Speed</small>
+                <div class="chips" id="speeds" role="group" aria-label="Simulation steps per frame"></div>
+              </div>
+              <div class="ctl only-dispatch">
+                <small>Robots</small>
+                <div class="chips" id="robots" role="group" aria-label="Number of robots"></div>
+              </div>
+              <div class="ctl only-drive">
+                <p class="keys">
+                  <span><kbd>↑</kbd><kbd>↓</kbd></span><span>drive</span>
+                  <span><kbd>←</kbd><kbd>→</kbd></span><span>turn</span>
+                  <span><kbd>Space</kbd></span><span>fork</span>
+                  <span><kbd>S</kbd></span><span>scan</span>
+                </p>
+              </div>
+              <p class="hint only-dispatch">Click a box to order it. Click a robot to follow it.</p>
+              <p class="hint only-watch">One robot, orders from the stock records.</p>
+              <div class="links">
+                <button type="button" id="new-floor">New warehouse</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="caption">
+        <h2>Warehouse</h2>
+        <p id="caption-sub">Seed 1</p>
+      </div>
+    </section>
+
+    <section class="feed reveal" aria-label="Anatomy">
+      <figure>
+        <div class="feed-tile feed-anno" id="anatomy" tabindex="0" aria-label="Anatomy of the robot. Hover or focus for the spec sheet.">
+          <div class="anno-frame bot-frame">
+            <svg class="rays" aria-hidden="true"><g data-rays></g></svg>
+            <svg class="bot" viewBox="0 0 56 104" aria-hidden="true">
+              <g data-field>
+                <path class="field" d="M28 66 L4 -26 A96 96 0 0 1 52 -26 Z"/>
+              </g>
+              <rect x="-3" y="58" width="5" height="16" rx="2" fill="#2b2b30"/>
+              <rect x="54" y="58" width="5" height="16" rx="2" fill="#2b2b30"/>
+              <g data-forks>
+                <rect x="7" y="2" width="7" height="32" rx="1.5" fill="#a1a1aa"/>
+                <rect x="42" y="2" width="7" height="32" rx="1.5" fill="#a1a1aa"/>
+                <rect x="4" y="30" width="48" height="5" rx="1.5" fill="#71717a"/>
+              </g>
+              <g data-load transform="translate(28 14)">
+                <rect x="-17" y="-15" width="34" height="30" rx="1.5" fill="#e7cfa4" stroke="#c9ab78" stroke-width=".8"/>
+                <rect x="-2" y="-15" width="4" height="30" fill="rgba(255,255,255,.35)"/>
+                <rect x="-8" y="-8" width="16" height="16" fill="#fff"/>
+                <path d="M-7 -7h5v5h-5zM2 -7h5v5h-5zM-7 2h5v5h-5zM0 0h2v2h-2zM3 3h2v4h-2z" fill="#111113"/>
+              </g>
+              <rect y="34" width="56" height="70" rx="9" fill="#111113"/>
+              <rect x="3" y="36" width="50" height="4" rx="1.5" fill="#3f3f46"/>
+              <rect x="20" y="42" width="16" height="4" rx="2" fill="#60a5fa" opacity=".9"/>
+              <circle cx="28" cy="66" r="8" fill="#27272a"/>
+              <circle cx="28" cy="66" r="3.2" fill="rgba(255,255,255,.35)"/>
+              <rect x="16" y="88" width="24" height="9" rx="2" fill="none" stroke="rgba(255,255,255,.35)" stroke-width="1"/>
+              <rect data-battery x="17" y="89" width="22" height="7" rx="1.2" fill="#16a34a"/>
+              <circle data-lamp cx="7" cy="98" r="2.2" fill="#60a5fa"/>
+            </svg>
+
+            <div class="kl" aria-hidden="true">
+              <div class="kl-box"></div>
+              <div class="kl-dim kl-dim-top"><i></i><b>0.56</b><i></i></div>
+              <div class="kl-dim kl-dim-side"><i></i><b>1.04</b><i></i></div>
+              <div class="kl-axle" style="top: 63.5%"></div>
+            </div>
+
+            <div class="anno-item anno-left" style="top: 63.5%">
+              <div class="anno-label"><em>01</em><b>Lidar</b><span>270°, 6 m, 37 rays at 10 Hz</span></div>
+              <i class="anno-line"></i><i class="anno-dot"></i>
+            </div>
+            <div class="anno-item anno-right" style="top: 42%">
+              <i class="anno-dot"></i><i class="anno-line"></i>
+              <div class="anno-label"><em>02</em><b>Scanner</b><span>Decodes QR versions 1–4 from pixels</span></div>
+            </div>
+            <div class="anno-item anno-left" style="top: 12%">
+              <div class="anno-label"><em>03</em><b>Fork</b><span>Lifts 0–1.6 m, reaches 0.3 m, 30 kg</span></div>
+              <i class="anno-line"></i><i class="anno-dot"></i>
+            </div>
+            <div class="anno-item anno-right" style="top: 63.5%">
+              <i class="anno-dot"></i><i class="anno-line"></i>
+              <div class="anno-label"><em>04</em><b>Drive</b><span>Two wheels, 1.5 m/s, turns on the spot</span></div>
+            </div>
+            <div class="anno-item anno-right" style="top: 89%">
+              <i class="anno-dot"></i><i class="anno-line"></i>
+              <div class="anno-label"><em>05</em><b>Battery</b><span>Goes to charge below 20 %</span></div>
+            </div>
+          </div>
+          <div class="anno-hint"><span class="on-hover">Hover for details</span><span class="on-touch">Tap for details</span></div>
+        </div>
+        <figcaption class="feed-caption">
+          <h2>Anatomy</h2>
+          <p>Live from the robot in focus · lidar on a square-root scale</p>
+        </figcaption>
+      </figure>
+    </section>
+
+    <section class="column reveal" aria-label="How it works">
+      <h2 class="dear">How it works</h2>
+      <p class="gray">
+        Every 1/60 s each robot moves one fixed step. What it does with
+        that step comes from a short list of jobs, and every job is the
+        same five stages.
+      </p>
+      <ol class="rows steps">
+        <li><em>01</em><span>An order names a package, the bay the records say it's in, and a dock. In Watch they come from the stock records; in Dispatch from your clicks.</span></li>
+        <li><em>02</em><span>A* plans a route along the one-way lanes. A corner costs extra, because the robot has to stop and turn on the spot.</span></li>
+        <li><em>03</em><span>The robot reserves cells ahead of it and only drives into cells it holds. A crossing is taken together with the cell after it, so nobody stops in the middle of one.</span></li>
+        <li><em>04</em><span>At the bay it turns, raises the fork to the shelf, reaches in and lifts. An empty bay is reported missing.</span></li>
+        <li><em>05</em><span>The scanner renders what it sees as pixels, finds the code and decodes it, Reed–Solomon and all. A wrong label goes back on the shelf; two failed reads flag the bay for a person.</span></li>
+      </ol>
+
+      <h2 class="dear section-gap">Who checks what</h2>
+      <p class="gray">
+        The delivery log doesn't trust the robot. Each line is worked out
+        from what the sensors recorded: what the fork found, what the
+        scanner decoded and what was set down at which dock, against what
+        the order asked for. About one box in twenty sits in the wrong bay
+        or isn't there at all, and one in five has a smudged or torn label,
+        so the log has something to catch.
+      </p>
+
+      <h2 class="dear section-gap">The numbers</h2>
+      <p class="gray">
+        Headless runs in Node, half an hour of warehouse time each, on
+        <span data-fact="seeds">8</span> seeds.
+      </p>
+      <div class="rows facts">
+        <div class="row"><span>One robot</span><b data-fact="solo">–</b></div>
+        <div class="row"><span>Four robots</span><b data-fact="fleet">–</b></div>
+        <div class="row"><span>Labels read on the first try</span><b data-fact="first">–</b></div>
+        <div class="row"><span>Codewords fixed by Reed–Solomon</span><b data-fact="corrected">–</b></div>
+        <div class="row"><span>Robots closer than one cell</span><b data-fact="closest">–</b></div>
+      </div>
+    </section>
+
+    <footer class="footer reveal">
+      <div class="f-block">
+        <div class="f-label">Source</div>
+        <a class="f-value" href="https://github.com/Stxqq/forklift">github.com/Stxqq/forklift</a>
+      </div>
+      <div class="f-block">
+        <div class="f-label">License</div>
+        <a class="f-value" href="https://github.com/Stxqq/forklift/blob/main/LICENSE">MIT</a>
+      </div>
+      <div class="f-block">
+        <div class="f-label">Built by</div>
+        <a class="f-value" href="https://github.com/Stxqq">Stefan Carapic</a>
+      </div>
+    </footer>
+  </main>
+</body>
+</html>
