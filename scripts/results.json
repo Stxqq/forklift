@@ -1,0 +1,23 @@
+{
+  "seeds": [
+    101,
+    102,
+    103,
+    104,
+    105,
+    106,
+    107,
+    108
+  ],
+  "minutes": 30,
+  "solo": {
+    "perHour": 44
+  },
+  "fleet": {
+    "perHour": 170
+  },
+  "firstTry": 0.9341126461211477,
+  "scans": 1003,
+  "corrected": 719,
+  "closest": 1
+}
