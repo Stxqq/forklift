@@ -183,6 +183,7 @@ function showOrder(session) {
 // ------------------------------------------------------------------- log
 
 const logEl = $("#log");
+const logCard = $(".log-card");
 const logEmpty = $("#log-empty");
 const logNote = $("#log-note");
 let logKey = "";
@@ -190,8 +191,10 @@ const clock = (t) => `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(Ma
 let seenOrders = new Set();
 
 function showLog(world) {
-  const rows = world.log(wide.matches ? 9 : 6);
-  const key = rows.map((r) => `${r.order.id}${r.status}`).join("|");
+  // as many rows as the card has room for, so none is cut in half
+  const room = wide.matches ? Math.floor((logCard.clientHeight - 64) / 47) : 6;
+  const rows = world.log(Math.max(3, room));
+  const key = rows.map((r) => `${r.order.id}${r.status}`).join("|") + room;
   if (key === logKey) return;
   logKey = key;
   const fresh = [];

@@ -469,7 +469,7 @@ a.f-value:hover { color: var(--ink); }
   background: #fff; border-radius: 16px; box-shadow: var(--card-shadow);
   padding: 12px 14px 12px;
   pointer-events: none;
-  transition: opacity .3s var(--ease), transform .45s var(--ease), left .45s var(--ease), top .45s var(--ease);
+  transition: opacity .3s var(--ease), transform .45s var(--ease);
 }
 .scan-card[hidden] { display: block; opacity: 0; transform: translateY(6px) scale(.97); }
 .scan-view { position: relative; margin-top: 8px; border-radius: 8px; overflow: hidden; background: #f4f4f5; }

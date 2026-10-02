@@ -7,6 +7,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { encode, rasterize } from "../src/sim/qr.js";
+import { Rng } from "../src/sim/rng.js";
+import { Warehouse } from "../src/sim/warehouse.js";
 import { grayPng } from "./png.mjs";
 
 const texts = ["PKG-00421 B3 D2", "A", "forklift", "PKG-99999 H16 D4", "Dock 2", "https://stxqq.github.io/forklift/"];
@@ -20,6 +22,15 @@ for (const level of ["L", "M", "Q", "H"]) {
     writeFileSync(file, grayPng(rasterize(code, { scale: 8, quiet: 4 })));
     cases.push({ text, level, code, file });
   }
+}
+// and the images the robot's scanner actually decodes: 124 px, sensor
+// noise, scuffs, exactly what the scan card on the page shows
+const rng = new Rng(5);
+const ws = new Warehouse(339);
+for (const pkg of [...ws.packages.values()].filter((p) => p.damage < 2).slice(0, 12)) {
+  const file = join(dir, `${cases.length}.png`);
+  writeFileSync(file, grayPng(rasterize(pkg.code, { scale: 4, quiet: 3, marks: pkg.marks, noise: 20, rng })));
+  cases.push({ text: pkg.payload, level: `M scanner${pkg.damage ? ", scuffed" : ""}`, code: pkg.code, file });
 }
 const swift = join(dir, "read.swift");
 writeFileSync(swift, `
