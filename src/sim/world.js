@@ -5,8 +5,9 @@
 
 import { Rng, deriveSeed } from "./rng.js";
 import { Warehouse, W, CELL, LEVELS, center, key } from "./warehouse.js";
-import { dirFromHeading, plan, walkPath } from "./planner.js";
+import { TIME, dirFromHeading, planTimed, timesTo, walkPath } from "./planner.js";
 import { Robot, SPEC, wrap } from "./robot.js";
+import { hit, sweep } from "./collide.js";
 import { OrderBook, parsePayload } from "./orders.js";
 import { decode, rasterize } from "./qr.js";
 
@@ -16,6 +17,13 @@ const RESTOCK_EVERY = 18;
 const RELABEL_AFTER = 45;
 const LIDAR_EVERY = 6;
 const WORKER_TAG = 100;
+// how long a robot expects to stand at the end of a leg: a pick (turn,
+// lift, reach, scan) or a drop
+export const DWELL = { pick: 11, drop: 5, rest: Infinity };
+// slack around every booking in the reservation table
+const MARGIN = 0.35;
+// stuck behind someone this long, a robot looks for another way
+const REPLAN_AFTER = 2.5;
 
 /** Cell reservations: a robot may only drive into cells it holds. */
 export class Traffic {
@@ -41,7 +49,19 @@ export class Traffic {
    */
   request(robot, path, j) {
     const cells = [path[j]];
-    for (let k = j; k < path.length - 1 && this.warehouse.isJunction(path[k]); k++) cells.push(path[k + 1]);
+    for (let k = j; k < path.length - 1 && this.warehouse.noStop(path[k]); k++) cells.push(path[k + 1]);
+    // at most three robots in one short north–south stretch (see warehouse.js)
+    const ws = this.warehouse;
+    for (const c of cells) {
+      const id = ws.stretch[c];
+      if (id < 0 || robot.held.some((h) => ws.stretch[h] === id)) continue;
+      const inside = new Set();
+      for (let k = 0; k < this.owner.length; k++) if (ws.stretch[k] === id && this.owner[k] >= 0 && this.owner[k] < WORKER_TAG && this.owner[k] !== robot.id) inside.add(this.owner[k]);
+      if (inside.size >= 3) {
+        this.blocker = { kind: "robot", id: [...inside][0] };
+        return false;
+      }
+    }
     for (const c of cells) {
       if (!this.free(c, robot.id)) {
         const o = this.owner[c];
@@ -109,9 +129,13 @@ export class World {
    * mode: "watch" (one robot, endless orders), "dispatch" (2–4 robots,
    * orders from clicks) or "drive" (one robot on the keyboard).
    */
-  constructor({ seed = 1, robots = 1, mode = "watch", workers = 3 } = {}) {
+  constructor({ seed = 1, robots = 1, mode = "watch", workers = 3, routing = "cooperative" } = {}) {
     this.seed = seed;
     this.mode = mode;
+    // "cooperative": space-time A* over everyone's bookings, orders to the
+    // robot that gets there first. "simple": the quickest route as if the
+    // floor were empty, orders to whoever is free, first come first served.
+    this.routing = routing;
     this.time = 0;
     this.steps = 0;
     this.warehouse = new Warehouse(seed);
@@ -145,7 +169,7 @@ export class World {
     const walks = [];
     for (let k = 0; k < ws.grid.length; k++) if (ws.grid[k] === CELL.WALK) walks.push(k);
     this.walkCells = walks;
-    const starts = [key(3, 3), key(4, 9), key(22, 6)];
+    const starts = [key(4, 3), key(4, 12), key(23, 8)];
     for (let i = 0; i < workers; i++) this.workers.push(new Worker(i, starts[i % starts.length], this.rng.workers));
 
     if (mode === "watch" || mode === "drive") this.topUpOrders();
@@ -204,6 +228,7 @@ export class World {
       w.prev.h = w.h;
     }
     for (const w of this.workers) this.stepWorker(w, dt);
+    if (this.routing === "cooperative") this.dispatch();
     for (const r of this.robots) {
       const limit = this.safety(r);
       if (r.manual) this.stepManual(r, limit, dt);
@@ -337,7 +362,7 @@ export class World {
       return;
     }
     if (!w.path || w.i >= w.path.length - 1) {
-      const side = (k) => (k % W > 12 ? 1 : 0);
+      const side = (k) => (k % W > 13 ? 1 : 0);
       const options = this.walkCells.filter((k) => side(k) === side(w.cell) && k !== w.cell);
       const goal = options[this.rng.workers.int(options.length)];
       w.path = walkPath(ws, w.cell, goal);
@@ -349,14 +374,22 @@ export class World {
     }
     const next = w.path[w.i + 1];
     if (w.seg === 0 && ws.crosswalks.has(next) && !w.held.includes(next)) {
-      const c = center(next);
-      const close = this.robots.some((r) => Math.hypot(r.x - c.x, r.y - c.y) < 1.7);
-      if (this.traffic.owner[next] !== -1 || close) {
+      // the whole way across in one go, both lanes, so nobody is ever
+      // left standing between them
+      const run = [];
+      for (let j = w.i + 1; j < w.path.length && ws.crosswalks.has(w.path[j]); j++) run.push(w.path[j]);
+      const close = run.some((c) => {
+        const p = center(c);
+        return this.robots.some((r) => Math.hypot(r.x - p.x, r.y - p.y) < 1.7);
+      });
+      if (close || run.some((c) => this.traffic.owner[c] !== -1)) {
         w.waiting = true;
         return;
       }
-      this.traffic.claim(next, w.tag);
-      w.held.push(next);
+      for (const c of run) {
+        this.traffic.claim(c, w.tag);
+        w.held.push(c);
+      }
     }
     w.waiting = false;
     w.moving = true;
@@ -382,12 +415,130 @@ export class World {
 
   // ------------------------------------------------------------- robots
 
-  route(r, goal) {
+  /**
+   * A route for a robot standing still on its cell. Cooperative routing
+   * books it into the reservation table; simple routing takes the
+   * quickest way across an empty floor. Either way the robot only drives
+   * into cells it holds, so a stale plan can cost time but never a crash.
+   */
+  route(r, goal, dwell = 0) {
     this.traffic.reset(r);
-    const path = plan(this.warehouse, r.cell, goal, dirFromHeading(r.h));
-    if (!path) return false;
-    r.setPath(path);
+    const ws = this.warehouse;
+    const heading = dirFromHeading(r.h);
+    let plan = null;
+    if (this.routing === "cooperative") {
+      plan = planTimed(ws, r.cell, goal, heading, { now: this.time, reserved: this.reservations(r), dwell });
+    }
+    if (!plan) {
+      // nominal times for the ETA, without anyone else on the floor
+      plan = planTimed(ws, r.cell, goal, heading, { now: this.time });
+      if (!plan) return false;
+      // no planned waits on an empty floor
+      plan.tout = plan.tin.slice();
+    }
+    r.setPath(plan.path, plan.tin, plan.tout, plan.eta);
+    r.legStart = this.time;
+    r.dwell = dwell;
+    r.stuck = 0;
     return true;
+  }
+
+  /**
+   * Everyone else's bookings, as the planner wants them: cell → [from, to]
+   * times. A robot running late has its whole plan shifted by how late it
+   * is; one standing at a bay is booked there for what's left of its pick.
+   */
+  reservations(self) {
+    const booked = new Map();
+    const book = (c, a, b) => {
+      let list = booked.get(c);
+      if (!list) booked.set(c, (list = []));
+      list.push([a - MARGIN, b + MARGIN]);
+    };
+    const now = this.time;
+    for (const o of this.robots) {
+      if (o === self) continue;
+      for (const c of o.held) book(c, now, now + 1);
+      const moving = /^to/.test(o.phase) && o.path && o.tin && o.i < o.path.length;
+      if (moving) {
+        const i = o.i;
+        const planned = o.seg === 0 ? Math.min(Math.max(now, o.tin[i]), o.tout[i]) : o.tout[i] + o.seg * ((o.tin[i + 1] ?? o.tout[i]) - o.tout[i]);
+        const late = Math.max(0, now - planned);
+        for (let k = i; k < o.path.length; k++) {
+          const last = k === o.path.length - 1;
+          const end = last ? o.tin[k] + late + (o.dwell ?? 0) : o.tout[k] + late;
+          book(o.path[k], o.tin[k] + late, end);
+        }
+      } else if (o.phase === "idle" || o.phase === "parked" || o.phase === "charging") {
+        book(o.cell, now, Infinity);
+      } else {
+        // picking, scanning or dropping: booked for the rest of it
+        const total = o.job?.kind === "order" && o.stage >= 3 ? DWELL.drop : DWELL.pick;
+        const left = Math.max(2, total - (now - (o.arrivedAt ?? now)));
+        book(o.cell, now, now + left);
+      }
+    }
+    return booked;
+  }
+
+  /**
+   * Cooperative dispatch: of all free robots and waiting orders, the
+   * pair that gets a robot to a bay soonest goes first, again and again.
+   * An order that has waited earns a head start, so none waits forever.
+   */
+  dispatch() {
+    const ws = this.warehouse;
+    const free = this.robots.filter((r) => !r.manual && (r.phase === "idle" || r.phase === "parked") && r.battery >= SPEC.battery.low);
+    if (!free.length) return;
+    const orders = this.book.queued().filter((o) => !ws.bay(o.bay).reserved);
+    while (free.length && orders.length) {
+      let best = null;
+      for (const r of free) {
+        for (const o of orders) {
+          const eta = timesTo(ws, ws.bay(o.bay).from)[r.cell];
+          const score = eta - 0.2 * (this.time - o.created);
+          if (!best || score < best.score) best = { r, o, score };
+        }
+      }
+      this.take(best.r, best.o);
+      free.splice(free.indexOf(best.r), 1);
+      orders.splice(orders.indexOf(best.o), 1);
+    }
+  }
+
+  take(r, order) {
+    const ws = this.warehouse;
+    const bay = ws.bay(order.bay);
+    const dock = ws.docks[order.dock - 1];
+    bay.reserved = true;
+    order.started = this.time;
+    order.robot = r.id;
+    r.job = { kind: "order", order, bay, dock, attempt: 0 };
+    if (this.route(r, bay.from, DWELL.pick)) {
+      r.phase = "toPick";
+      r.stage = 0;
+    }
+  }
+
+  /** On a leg: if stuck behind another robot for a while, look for a better way. */
+  drive(r, limit, dt, next) {
+    const done = r.follow(this.traffic, limit, dt, this.time);
+    if (done) {
+      r.arrivedAt = this.time;
+      r.phase = next;
+      return true;
+    }
+    if (this.routing === "cooperative" && r.waiting?.kind === "robot" && r.seg === 0) {
+      r.stuck += dt;
+      if (r.stuck > REPLAN_AFTER) {
+        const goal = r.path[r.path.length - 1];
+        this.route(r, goal, r.dwell);
+        r.stuck = -REPLAN_AFTER; // give the new plan a moment before trying again
+      }
+    } else if (r.stuck > 0) {
+      r.stuck = 0;
+    }
+    return false;
   }
 
   assign(r) {
@@ -398,30 +549,19 @@ export class World {
         charger.owner = r.id;
         r.job = { kind: "charge", spot: charger };
         this.say(`Robot ${r.id + 1}: battery ${Math.round(r.battery * 100)} %, going to charge`);
-        if (this.route(r, charger.cell)) r.phase = "toCharge";
+        if (this.route(r, charger.cell, DWELL.rest)) r.phase = "toCharge";
         return;
       }
     }
-    const order = this.book.queued().find((o) => {
-      const bay = ws.bay(o.bay);
-      return !bay.reserved;
-    });
-    if (order) {
-      const bay = ws.bay(order.bay);
-      const dock = ws.docks[order.dock - 1];
-      bay.reserved = true;
-      order.started = this.time;
-      order.robot = r.id;
-      r.job = { kind: "order", order, bay, dock, attempt: 0 };
-      if (this.route(r, bay.from)) {
-        r.phase = "toPick";
-        r.stage = 0;
-      }
+    const order = this.book.queued().find((o) => !ws.bay(o.bay).reserved);
+    if (order && this.routing === "simple") {
+      this.take(r, order);
       return;
     }
+    if (order) return; // dispatch() will hand it out
     if (r.cell !== r.home.cell) {
       r.job = { kind: "park" };
-      if (this.route(r, r.home.cell)) r.phase = "toPark";
+      if (this.route(r, r.home.cell, DWELL.rest)) r.phase = "toPark";
       return;
     }
     r.phase = "idle";
@@ -471,13 +611,10 @@ export class World {
         this.assign(r);
         break;
       case "toPark":
-        if (r.follow(this.traffic, limit, dt)) {
-          r.job = null;
-          r.phase = "parked";
-        }
+        if (this.drive(r, limit, dt, "parked")) r.job = null;
         break;
       case "toCharge":
-        if (r.follow(this.traffic, limit, dt)) r.phase = "charging";
+        this.drive(r, limit, dt, "charging");
         break;
       case "charging":
         r.battery = Math.min(1, r.battery + f.battery.charge * dt);
@@ -488,7 +625,10 @@ export class World {
         }
         break;
       case "toPick":
-        if (r.follow(this.traffic, limit, dt)) r.phase = "facePick";
+        // the fork goes up to the shelf on the last stretch, not after
+        if (r.path && r.i >= r.path.length - 3) r.forkTo(this.shelf(job), 0, dt);
+        else r.forkTo(f.travelHeight, 0, dt);
+        this.drive(r, limit, dt, "facePick");
         break;
       case "facePick":
         r.stage = 1;
@@ -520,7 +660,13 @@ export class World {
         }
         break;
       case "retract":
-        if (r.forkTo(this.shelf(job) + 0.06, 0, dt)) r.phase = "lower";
+        // the label scanner rides on the carriage, so it reads the box
+        // right where it is; the fork comes down on the way to the dock
+        if (r.forkTo(this.shelf(job) + 0.06, 0, dt)) {
+          r.phase = "scan";
+          r.timer = 0;
+          r.stage = 2;
+        }
         break;
       case "lower":
         if (r.forkTo(f.scanHeight, 0, dt)) {
@@ -552,7 +698,9 @@ export class World {
         if (r.forkTo(f.travelHeight, 0, dt)) this.finish(r);
         break;
       case "toDrop":
-        if (r.forkTo(f.travelHeight, 0, dt) && r.follow(this.traffic, limit, dt)) r.phase = "faceDock";
+        // lower while driving off, and up to the dock height on the way in
+        r.forkTo(r.path && r.i >= r.path.length - 3 ? f.dockHeight + 0.06 : f.travelHeight, 0, dt);
+        this.drive(r, limit, dt, "faceDock");
         break;
       case "faceDock":
         if (r.turnTo(job.dock.facing, dt)) r.phase = "dropRaise";
@@ -635,7 +783,7 @@ export class World {
       return;
     }
     r.scan.verdict = "ok";
-    if (this.route(r, job.dock.from)) {
+    if (this.route(r, job.dock.from, DWELL.drop)) {
       r.phase = "toDrop";
       r.stage = 3;
     }
@@ -658,6 +806,25 @@ export class World {
     const dock = ws.docks.find((d) => d.cell === cell);
     if (dock && near(dock.from, dock.facing)) return { dock };
     return {};
+  }
+
+  /** Ease to the middle of a cell, swept for collisions, then turn to a heading. */
+  align(r, cell, heading, dt) {
+    const c = center(cell);
+    const d = Math.hypot(c.x - r.x, c.y - r.y);
+    if (d > 1e-4) {
+      const stepLen = Math.min(d, Math.max(0.05, Math.min(0.5, d * 3)) * dt);
+      const to = { x: r.x + ((c.x - r.x) / d) * stepLen, y: r.y + ((c.y - r.y) / d) * stepLen, h: r.h };
+      const res = sweep(this.warehouse, r, to, { reach: r.fork.reach, loaded: !!r.load, others: this.robots.filter((o) => o !== r), people: this.workers });
+      if (res.blocked) return "blocked";
+      r.x = to.x;
+      r.y = to.y;
+      r.v = 0;
+      if (d - stepLen > 1e-4) return "moving";
+      r.x = c.x;
+      r.y = c.y;
+    }
+    return r.turnTo(heading, dt) ? "done" : "turning";
   }
 
   /** Space in Drive: pick up, put back or set down, depending on what's in front. */
@@ -709,7 +876,8 @@ export class World {
     const empty = r.battery <= 0;
     if (r.phase === "idle" || r.phase === "carry") {
       r.manual.limit = empty ? 0.25 : limit;
-      r.drive((x, y) => this.warehouse.solidAt(x, y), empty ? Math.min(limit, 0.25) : limit, dt);
+      const others = this.robots.filter((o) => o !== r);
+      r.drive(this.warehouse, others, this.workers, empty ? Math.min(limit, 0.25) : limit, dt);
       const charger = this.warehouse.chargers.find((c) => {
         const p = center(c.cell);
         return Math.hypot(p.x - r.x, p.y - r.y) < 0.4;
@@ -723,9 +891,22 @@ export class World {
     r.v = 0;
     const height = job ? this.shelf(job) : f.travelHeight;
     switch (r.phase) {
-      case "mFace":
-        if (r.turnTo(job.bay.facing, dt)) r.phase = "mRaise";
+      case "mFace": {
+        // line up on the bay first, the way an AMR docks: to the middle of
+        // the cell, then turn; the fork only goes out when it's straight
+        const a = this.align(r, job.bay.from, job.bay.facing, dt);
+        if (a === "done") r.phase = "mRaise";
+        else if (a === "blocked") {
+          this.say(`Can't line up with bay ${job.bay.id} from here`);
+          job.bay.reserved = false;
+          job.order.started = null;
+          job.order.robot = null;
+          r.job = null;
+          r.phase = "idle";
+          r.stage = -1;
+        }
         break;
+      }
       case "mRaise":
         if (r.forkTo(height, 0, dt)) r.phase = "mReach";
         break;
@@ -797,7 +978,7 @@ export class World {
         break;
       }
       case "mPut":
-        if (r.turnTo(job.bay.facing, dt) && r.forkTo(height + 0.06, 1, dt)) {
+        if (this.align(r, job.bay.from, job.bay.facing, dt) === "done" && r.forkTo(height + 0.06, 1, dt)) {
           job.bay.pkg = r.load;
           r.load = null;
           job.bay.reserved = false;
@@ -813,7 +994,7 @@ export class World {
         }
         break;
       case "mDrop":
-        if (r.turnTo(job.dock.facing, dt) && r.forkTo(f.dockHeight, 1, dt)) {
+        if (this.align(r, job.dock.from, job.dock.facing, dt) === "done" && r.forkTo(f.dockHeight, 1, dt)) {
           this.drop(r, job.dock, job.order);
           job.order.finished = this.time;
           job.bay.reserved = false;

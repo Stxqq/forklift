@@ -4,11 +4,13 @@
 
 import { LEVELS, center } from "./warehouse.js";
 import { dirOf } from "./planner.js";
+import { BODY, FORK, sweep } from "./collide.js";
 
 export const SPEC = {
-  length: 0.72, // body, meters
-  width: 0.56,
-  forkLength: 0.32,
+  length: BODY.x1 - BODY.x0, // chassis with outriggers, meters
+  width: BODY.half * 2,
+  forkLength: FORK.x1 - FORK.x0,
+  reach: FORK.reach, // how far the fork slides out
   maxSpeed: 1.5, // m/s
   reverse: 0.6,
   accel: 1.0, // m/s²
@@ -18,7 +20,7 @@ export const SPEC = {
   jerk: 4, // m/s³
   forkSpeed: 0.6, // m/s up and down
   forkAccel: 1.6,
-  reachTime: 0.7, // s to slide the fork in or out
+  reachTime: 0.9, // s to slide the fork all the way out
   maxFork: 1.6,
   payload: 30, // kg
   travelHeight: 0.1,
@@ -34,6 +36,9 @@ export const SPEC = {
   corridor: 0.62,
   battery: { perMeter: 0.0011, perLift: 0.003, idle: 0.00002, charge: 0.02, low: 0.2, full: 0.95 },
 };
+
+// cells a robot asks for ahead of the one it's in
+export const LOOKAHEAD = 2;
 
 export const HEADINGS = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
 const DIRS = [
@@ -97,12 +102,16 @@ export class Robot {
 
   /** Where the fork tips are, for scanning and picking. */
   get forkTip() {
-    const d = SPEC.length / 2 + SPEC.forkLength * (0.6 + 0.4 * this.fork.reach);
+    const d = FORK.x1 + this.fork.reach * FORK.reach;
     return { x: this.x + Math.cos(this.h) * d, y: this.y + Math.sin(this.h) * d };
   }
 
-  setPath(path) {
+  /** A route, with the planned arrival and departure time at each cell. */
+  setPath(path, tin = null, tout = null, eta = null) {
     this.path = path;
+    this.tin = tin;
+    this.tout = tout;
+    this.eta = eta;
     this.i = 0;
     this.seg = 0;
   }
@@ -161,7 +170,7 @@ export class Robot {
    * as quarter circles through the corner cell; the robot only turns on
    * the spot at the start of a route. Returns true on arrival.
    */
-  follow(traffic, limit, dt) {
+  follow(traffic, limit, dt, now = 0) {
     const path = this.path;
     if (!path || this.i >= path.length - 1) {
       this.v = 0;
@@ -170,6 +179,13 @@ export class Robot {
     if (this.seg === 0) {
       const d = dirOf(path[this.i], path[this.i + 1]);
       if (this.corner(this.i) !== 1 && !this.turnTo(HEADINGS[d], dt)) return false;
+      // a planned wait: someone else is booked on the way first
+      if (this.tout && this.tout[this.i] - this.tin[this.i] > 0.3 && now < this.tout[this.i] - 0.05) {
+        this.v = 0;
+        this.acc = 0;
+        this.waiting = { kind: "plan", until: this.tout[this.i] };
+        return false;
+      }
       if (!this.holds(path[this.i + 1]) && !traffic.request(this, path, this.i + 1)) {
         this.v = 0;
         this.acc = 0;
@@ -180,7 +196,7 @@ export class Robot {
     this.waiting = null;
     // reserve a few cells ahead while moving, so a free lane doesn't mean
     // stopping at every cell
-    for (let j = this.i + 1; j < path.length && j <= this.i + 3; j++) {
+    for (let j = this.i + 1; j < path.length && j <= this.i + LOOKAHEAD; j++) {
       if (this.holds(path[j])) continue;
       if (!traffic.request(this, path, j)) break;
     }
@@ -287,7 +303,13 @@ export class Robot {
   }
 
   /** Free driving from the keyboard, with walls and the safety field. */
-  drive(solidAt, limit, dt) {
+  /**
+   * Free driving from the keyboard. The move is swept against walls,
+   * racks, uprights, people and other robots with the whole footprint,
+   * fork and load included; if it's blocked it slides along whatever is
+   * in the way instead of overlapping it.
+   */
+  drive(ws, others, people, limit, dt) {
     const m = this.manual;
     const want = m.throttle >= 0 ? m.throttle * SPEC.maxSpeed * limit : m.throttle * SPEC.reverse;
     const dv = want - this.v;
@@ -297,34 +319,42 @@ export class Robot {
     const dw = wantW - this.w;
     const wstep = SPEC.turnAccel * dt;
     this.w += Math.abs(dw) <= wstep ? dw : Math.sign(dw) * wstep;
+    const opts = { reach: this.fork.reach, loaded: !!this.load, others, people };
+    const from = { x: this.x, y: this.y, h: this.h };
     const h = wrap(this.h + this.w * dt);
-    const nx = this.x + Math.cos(h) * this.v * dt;
-    const ny = this.y + Math.sin(h) * this.v * dt;
-    const r = SPEC.width / 2 + 0.04;
-    const blocked = (x, y) => {
-      for (let k = 0; k < 12; k++) {
-        const a = (k / 12) * Math.PI * 2;
-        if (solidAt(x + Math.cos(a) * r, y + Math.sin(a) * r)) return true;
+    const dx = Math.cos(h) * this.v * dt;
+    const dy = Math.sin(h) * this.v * dt;
+    // the whole move, then sliding along x or y, then turning on the spot
+    const tries = [
+      { x: from.x + dx, y: from.y + dy, h },
+      { x: from.x + dx, y: from.y, h },
+      { x: from.x, y: from.y + dy, h },
+      { x: from.x, y: from.y, h },
+      { x: from.x + dx, y: from.y + dy, h: from.h },
+    ];
+    let done = null;
+    for (let i = 0; i < tries.length; i++) {
+      const res = sweep(ws, from, tries[i], opts);
+      if (!res.blocked) {
+        done = tries[i];
+        // sliding along a wall keeps most of the speed; turning on the spot doesn't
+        if (i > 0) this.v *= i < 3 ? 0.97 : 0.4;
+        if (i === 4) this.w = 0;
+        break;
       }
-      return false;
-    };
-    this.h = h;
-    let moved = 0;
-    if (!blocked(nx, ny)) {
-      moved = Math.hypot(nx - this.x, ny - this.y);
-      this.x = nx;
-      this.y = ny;
-    } else if (!blocked(nx, this.y)) {
-      moved = Math.abs(nx - this.x);
-      this.x = nx;
-      this.v *= 0.7;
-    } else if (!blocked(this.x, ny)) {
-      moved = Math.abs(ny - this.y);
-      this.y = ny;
-      this.v *= 0.7;
-    } else {
-      this.v = 0;
+      if (i === 0) this.bumped = res.blocked;
     }
+    if (!done) {
+      done = from;
+      this.v = 0;
+      this.w = 0;
+    } else if (done === tries[0]) {
+      this.bumped = null;
+    }
+    const moved = Math.hypot(done.x - from.x, done.y - from.y);
+    this.x = done.x;
+    this.y = done.y;
+    this.h = done.h;
     this.meters += moved;
     this.battery -= SPEC.battery.perMeter * moved;
   }

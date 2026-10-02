@@ -1,17 +1,19 @@
-// The warehouse floor: a 26 × 15 grid of one-meter cells. Robots drive on
-// one-way lanes (an outer ring run clockwise, three cross aisles and a
-// southbound shortcut down the middle), pick from rack bays beside the
-// aisles, drop at four docks on the east wall and charge or park in
-// side pockets off the west lane. People walk on two strips next to the
-// racks and cross the aisles on marked crosswalks.
+// The warehouse floor: a 28 × 20 grid of one-meter cells. Robots drive on
+// two-lane roads with right-hand traffic: five east–west roads (the three
+// rack aisles plus one along the top and one along the bottom) and three
+// north–south ones. Each lane is one way, so two robots never meet head
+// on, but every road runs both ways. They pick from rack bays beside the
+// aisles, drop at four docks on the east wall and charge or park in side
+// pockets off the west road. People walk on two strips next to the racks
+// and cross the aisles on marked crosswalks.
 //
 // The layout is fixed; the stock in it comes from the seed.
 
 import { Rng, deriveSeed } from "./rng.js";
 import { encode } from "./qr.js";
 
-export const W = 26;
-export const H = 15;
+export const W = 28;
+export const H = 20;
 
 export const CELL = {
   WALL: 0,
@@ -23,11 +25,18 @@ export const CELL = {
   STAGING: 6, // inbound pallets, not walkable
 };
 
-const RACK_ROWS = [2, 3, 5, 6, 8, 9, 11, 12];
-const RACK_COLS = [5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19, 20, 21];
+// east–west roads: [upper lane (westbound), lower lane (eastbound)]
+export const H_ROADS = [[1, 2], [5, 6], [9, 10], [13, 14], [17, 18]];
+// north–south roads: [left lane (southbound), right lane (northbound)]
+export const V_ROADS = [[2, 3], [13, 14], [24, 25]];
+export const RACK_ROWS = [3, 4, 7, 8, 11, 12, 15, 16];
+const RACK_COLS = [5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 19, 20, 21, 22];
+export const WALK_COLS = [4, 23];
 const ROW_LETTER = "ABCDEFGH";
 // shelf heights of the three levels, meters to the fork
 export const LEVELS = [0.15, 0.85, 1.55];
+// boxes stand at the front of a bay, where the fork reaches them
+export const BOX_OFFSET = 0.16;
 
 export const key = (x, y) => y * W + x;
 export const cellX = (k) => k % W;
@@ -44,6 +53,9 @@ export class Warehouse {
     this.grid = new Uint8Array(W * H);
     this.exits = Array.from({ length: W * H }, () => []);
     this.incoming = new Uint8Array(W * H);
+    // the way each lane cell runs: [dx, dy] along its east–west lane and
+    // its north–south lane (0 where it has none)
+    this.flow = Array.from({ length: W * H }, () => ({ h: 0, v: 0 }));
     this.bays = [];
     this.bayAt = new Map();
     this.docks = [];
@@ -62,26 +74,35 @@ export class Warehouse {
     const set = (x, y, t) => (g[key(x, y)] = t);
     for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) set(x, y, CELL.STAGING);
 
-    const lane = (cells, dx, dy) => {
-      for (const [x, y] of cells) set(x, y, CELL.LANE);
-      for (const [x, y] of cells) this.link(key(x, y), key(x + dx, y + dy));
-    };
-    const row = (y, x0, x1) => Array.from({ length: x1 - x0 + 1 }, (_, i) => [x0 + i, y]);
-    const col = (x, y0, y1) => Array.from({ length: y1 - y0 + 1 }, (_, i) => [x, y0 + i]);
-    // lay out cells first so link() only joins lane to lane
-    for (const y of [1, 4, 7, 10, 13]) for (const [x] of row(y, 2, 23)) set(x, y, CELL.LANE);
-    for (const x of [2, 13, 23]) for (const [, y] of col(x, 1, 13)) set(x, y, CELL.LANE);
-    lane(row(1, 2, 22), 1, 0); // top, east
-    lane(row(4, 2, 22), 1, 0); // east
-    lane(row(7, 3, 23), -1, 0); // west
-    lane(row(10, 2, 22), 1, 0); // east
-    lane(row(13, 3, 23), -1, 0); // bottom, west
-    lane(col(23, 1, 12), 0, 1); // east side, south
-    lane(col(2, 2, 13), 0, -1); // west side, north
-    lane(col(13, 1, 12), 0, 1); // middle, south
+    const x0 = V_ROADS[0][0];
+    const x1 = V_ROADS[V_ROADS.length - 1][1];
+    const y0 = H_ROADS[0][0];
+    const y1 = H_ROADS[H_ROADS.length - 1][1];
+    for (const [up, down] of H_ROADS) {
+      for (let x = x0; x <= x1; x++) {
+        set(x, up, CELL.LANE);
+        set(x, down, CELL.LANE);
+        this.flow[key(x, up)].h = -1;
+        this.flow[key(x, down)].h = 1;
+      }
+    }
+    for (const [left, right] of V_ROADS) {
+      for (let y = y0; y <= y1; y++) {
+        set(left, y, CELL.LANE);
+        set(right, y, CELL.LANE);
+        this.flow[key(left, y)].v = 1;
+        this.flow[key(right, y)].v = -1;
+      }
+    }
+    for (let k = 0; k < W * H; k++) {
+      if (g[k] !== CELL.LANE) continue;
+      const { h, v } = this.flow[k];
+      if (h) this.link(k, k + h);
+      if (v) this.link(k, k + v * W);
+    }
 
     RACK_ROWS.forEach((y, r) => {
-      // even rack rows face the aisle above them, odd ones the aisle below
+      // even rack rows face the lane above them, odd ones the lane below
       const faceY = r % 2 === 0 ? y - 1 : y + 1;
       RACK_COLS.forEach((x, c) => {
         set(x, y, CELL.RACK);
@@ -98,16 +119,16 @@ export class Warehouse {
       });
     });
 
-    for (const x of [3, 4, 22]) {
-      for (let y = 2; y <= 12; y++) {
+    for (const x of WALK_COLS) {
+      for (let y = RACK_ROWS[0]; y <= RACK_ROWS[RACK_ROWS.length - 1]; y++) {
         if (g[key(x, y)] === CELL.LANE) this.crosswalks.add(key(x, y));
         else set(x, y, CELL.WALK);
       }
     }
 
-    [2, 5, 8, 11].forEach((y, i) => {
-      set(24, y, CELL.DOCK);
-      this.docks.push({ id: i + 1, cell: key(24, y), from: key(23, y), facing: 0 });
+    [4, 8, 12, 16].forEach((y, i) => {
+      set(W - 2, y, CELL.DOCK);
+      this.docks.push({ id: i + 1, cell: key(W - 2, y), from: key(W - 3, y), facing: 0 });
     });
     const pocket = (y, list, label) => {
       set(1, y, CELL.POCKET);
@@ -115,8 +136,22 @@ export class Warehouse {
       this.link(key(1, y), key(2, y));
       list.push({ id: `${label}${list.length + 1}`, cell: key(1, y), from: key(2, y), owner: null });
     };
-    for (const y of [2, 3, 5, 6]) pocket(y, this.parking, "P");
-    for (const y of [11, 12]) pocket(y, this.chargers, "C");
+    for (const y of [3, 4, 7, 8]) pocket(y, this.parking, "P");
+    for (const y of [15, 16]) pocket(y, this.chargers, "C");
+
+    // The two-cell stretches of north–south road between two crossings.
+    // Both lanes of one stretch share an id: with U-turns at either end
+    // they form a loop of only four cells a robot can stop in, so the
+    // traffic rules let at most three robots into one at a time.
+    this.stretch = new Int16Array(W * H).fill(-1);
+    for (const [left, right] of V_ROADS) {
+      for (let y = H_ROADS[0][1] + 1; y < H_ROADS[H_ROADS.length - 1][0]; y++) {
+        if (this.isJunction(key(left, y))) continue;
+        let y0 = y;
+        while (!this.isJunction(key(left, y0 - 1))) y0--;
+        this.stretch[key(left, y)] = this.stretch[key(right, y)] = left * 100 + y0;
+      }
+    }
   }
 
   link(a, b) {
@@ -128,9 +163,19 @@ export class Warehouse {
     }
   }
 
-  /** Lane cells where two lanes meet; robots don't stop inside one. */
+  /**
+   * Lane cells where two lanes meet; robots don't stop inside one. The
+   * side pockets don't count: only their owner ever turns in there.
+   */
   isJunction(k) {
-    return this.exits[k].length > 1 || this.incoming[k] > 1;
+    if (this.grid[k] !== CELL.LANE) return false;
+    const { h, v } = this.flow[k];
+    return h !== 0 && v !== 0;
+  }
+
+  /** Cells a robot may not stop in: the crossings. */
+  noStop(k) {
+    return this.isJunction(k);
   }
 
   walkable(k) {

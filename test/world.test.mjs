@@ -136,15 +136,15 @@ test("a person in the path stops the robot; one ahead slows it", () => {
   const p = world.workers[0];
   // driving by hand, so the field looks the full distance ahead
   r.manual = { throttle: 0, turn: 0 };
-  r.x = 8.5; r.y = 4.5; r.h = 0;
-  p.x = 9.5; p.y = 4.5;
+  r.x = 8.5; r.y = 6.5; r.h = 0;
+  p.x = 9.5; p.y = 6.5;
   assert.equal(world.safety(r), 0);
   assert.equal(r.safety, "stop");
   p.x = 11.3;
   const slow = world.safety(r);
   assert.ok(slow > 0 && slow < 1);
   assert.equal(r.safety, "slow");
-  p.y = 6.5;
+  p.y = 8.5;
   assert.equal(world.safety(r), 1);
 });
 
