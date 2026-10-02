@@ -1,0 +1,20 @@
+{
+  "name": "forklift",
+  "version": "0.1.0",
+  "description": "A forklift robot works a warehouse in the browser: A* on one-way lanes, cell reservations for a small fleet, and a QR scanner that really decodes labels from pixels. No dependencies.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Stefan Carapic",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Stxqq/forklift.git"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "bench": "node scripts/bench.mjs",
+    "serve": "python3 -m http.server 5105"
+  }
+}
