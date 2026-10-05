@@ -118,7 +118,9 @@ class Worker {
     this.speed = rng.range(1.0, 1.3);
     this.pause = rng.range(0, 3);
     this.held = [];
-    this.prev = { x: this.x, y: this.y, h: this.h };
+    // meters walked, which only the 3D view's walk cycle reads
+    this.walked = 0;
+    this.prev = { x: this.x, y: this.y, h: this.h, walked: 0 };
     this.waiting = false;
     this.moving = false;
   }
@@ -226,6 +228,7 @@ export class World {
       w.prev.x = w.x;
       w.prev.y = w.y;
       w.prev.h = w.h;
+      w.prev.walked = w.walked;
     }
     for (const w of this.workers) this.stepWorker(w, dt);
     if (this.routing === "cooperative") this.dispatch();
@@ -397,6 +400,7 @@ export class World {
     const b = center(next);
     w.h = Math.atan2(b.y - a.y, b.x - a.x);
     w.seg += w.speed * dt;
+    w.walked += w.speed * dt;
     if (w.seg >= 1) {
       w.seg = 0;
       w.i++;

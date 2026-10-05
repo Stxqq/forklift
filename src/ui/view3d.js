@@ -4,18 +4,24 @@
 
 import { CELL, W, H, cellX, cellY, center } from "../sim/warehouse.js";
 import { between } from "../render/interp.js";
-import { status } from "../render/robot.js";
+import { SCAN_TIME } from "../sim/world.js";
 import { ChaseCamera } from "../render3d/camera.js";
 import { lookAt, multiply, perspective } from "../render3d/math.js";
-import { buildDynamic, buildStatic, ribbonPoints, safetyFan } from "../render3d/scene.js";
-import { Renderer } from "../render3d/gl.js";
+import { buildDynamic, buildStatic, laserFan, ribbonPoints, safetyFan } from "../render3d/scene.js";
+import { Looks } from "../render3d/looks.js";
+import { Renderer, screenFog } from "../render3d/gl.js";
 
-const FOG = [0.035, 0.035, 0.04];
-const SUN = (() => {
-  const v = [-0.35, 0.82, -0.45];
+const FOG = [0.03, 0.03, 0.035];
+const unit = (v) => {
   const l = Math.hypot(...v);
   return v.map((x) => x / l);
-})();
+};
+// key light high and from the front left, fill low from the other side
+const KEY = unit([-0.45, 0.8, -0.4]);
+const FILL = unit([0.6, 0.35, 0.7]);
+// contact shadows fall a little away from the key light
+const SHADOW = [-KEY[0] * 0.14, -KEY[2] * 0.14];
+const ease = (t) => (t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t));
 
 const LIFTING = /^(facePick|raise|reach|lift|retract|putBack|putReach|putSet|retractEmpty|stow|mFace|mRaise|mReach|mLift|mStow|mStowEmpty|mPut)$/;
 const DROPPING = /^(faceDock|dropRaise|dropReach|dropSet|dropRetract|confirm|mDrop)$/;
@@ -50,6 +56,9 @@ export class View3D {
     this.wheel = root.querySelector("#hud-wheel");
     this.mini = root.querySelector("#minimap");
     this.camera = new ChaseCamera();
+    this.looks = new Looks();
+    this.idle = 0;
+    this.orbit = null;
     this.renderer = null;
     this.error = null;
     this.staticScene = null;
@@ -116,6 +125,7 @@ export class View3D {
     if (!this.renderer || !focus) return;
     if (!this.staticScene || this.staticScene.ws !== world.warehouse) {
       this.staticScene = { ws: world.warehouse, ...buildStatic(world.warehouse) };
+      this.looks = new Looks();
       this.renderer.buffers.clear();
       this.miniBase = null;
     }
@@ -123,31 +133,50 @@ export class View3D {
     for (const r of world.robots) views.set(r, between(r, alpha));
     for (const w of world.workers) views.set(w, between(w, alpha));
     const v = views.get(focus);
-    const cam = this.camera.update(v, dt, { fixedYaw: this.motion.matches ? -Math.PI / 2 : null, moving: Math.abs(focus.v) > 0.15 });
+    const reduced = this.motion.matches;
+    // standing still a while, the camera drifts slowly round the robot
+    const resting = Math.abs(focus.v) < 0.02 && /^(idle|parked|charging)$/.test(focus.phase);
+    this.idle = resting ? this.idle + dt : 0;
+    if (this.idle > 6 && !reduced) this.orbit = (this.orbit ?? this.camera.yaw) + dt * 0.12;
+    else this.orbit = null;
+    const cam = this.camera.update(v, dt, {
+      yaw: reduced ? -Math.PI / 2 : this.orbit,
+      moving: Math.abs(focus.v) > 0.15,
+      speed: Math.min(1, Math.abs(focus.v) / 1.5),
+    });
     const aspect = this.region.w / this.region.h;
     // phones in portrait get a wider lens, so the robot's surroundings fit
-    const fov = aspect < 0.9 ? 1.0 : 0.86;
+    const fov = aspect < 0.9 ? 1.0 : 0.82;
     multiply(perspective(fov, aspect, 0.1, 80), lookAt(cam.eye, cam.target), this.viewProj);
-    const moving = (r) => Math.abs(r.v) > 0.05 || Math.abs(r.w) > 0.05 || !!r.waiting;
-    const dynamic = buildDynamic(world, views, focus, {
-      time,
-      statusColor: (r) => hexToRgba(status(r)),
-      beacon: (r) => moving(r) && (this.motion.matches || Math.sin(time * 9) > -0.2),
-    });
+    const looks = this.looks.update(world, views, { dt, time, eye: cam.eye, reduced, shadow: SHADOW });
+    const charging = new Set();
+    for (const r of world.robots) {
+      if (r.phase !== "charging" && !r.charging) continue;
+      for (const c of world.warehouse.chargers) if (Math.hypot(cellX(c.cell) + 0.5 - r.x, cellY(c.cell) + 0.5 - r.y) < 0.6) charging.add(c.id);
+    }
+    const dynamic = buildDynamic(world, views, focus, { looks, eye: cam.eye, docks: this.looks.docks, time, charging });
     let ribbon = null;
     if (!focus.manual && /^to/.test(focus.phase)) {
       const waiting = !!focus.waiting;
-      const pulse = waiting ? (this.motion.matches ? 0.45 : 0.4 + 0.25 * Math.sin(time * 5)) : 1;
+      const pulse = waiting ? (reduced ? 0.45 : 0.4 + 0.25 * Math.sin(time * 5)) : 1;
       ribbon = { points: ribbonPoints(focus, v), intensity: pulse };
     }
-    const tint = focus.safety === "stop" ? [0.94, 0.27, 0.27, 0.32] : focus.safety === "slow" ? [0.96, 0.62, 0.04, 0.26] : [0.23, 0.51, 0.96, 0.1];
+    let laser = null;
+    if (/scan/i.test(focus.phase) && focus.load && focus.timer < SCAN_TIME) {
+      const t = Math.min(1, focus.timer / SCAN_TIME);
+      laser = laserFan(v, reduced ? 0.5 : t < 0.5 ? ease(t * 2) : 1 - ease((t - 0.5) * 2));
+    }
+    const tint = focus.safety === "stop" ? [0.94, 0.27, 0.27, 0.3] : focus.safety === "slow" ? [0.96, 0.62, 0.04, 0.24] : [0.23, 0.51, 0.96, 0.08];
     this.renderer.render({
       viewProj: this.viewProj,
       eye: cam.eye,
-      sun: SUN,
+      focus: [v.x, 0.45, v.y],
+      key: KEY,
+      fill: FILL,
       fogColor: FOG,
-      fogDensity: 0.055,
-      scene: { static: this.staticScene, dynamic, ribbon, fan: { tris: safetyFan(focus, v), tint } },
+      clear: screenFog(FOG),
+      fogDensity: 0.05,
+      scene: { static: this.staticScene, dynamic, ribbon, laser, fan: { tris: safetyFan(focus, v), tint } },
     });
     this.hud(world, focus);
   }
@@ -225,9 +254,5 @@ export class View3D {
     g.fillStyle = "rgba(245,158,11,.85)";
     for (const w of world.workers) g.fillRect(ox + w.x * s - 1, oy + w.y * s - 1, 2, 2);
   }
-}
-
-function hexToRgba(hex) {
-  return [parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255, 1];
 }
 

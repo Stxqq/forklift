@@ -12,5 +12,6 @@ export function between(o, a) {
     h: p.h + wrap(o.h - p.h) * a,
     fh: p.fh === undefined ? 0 : p.fh + (o.fork.height - p.fh) * a,
     fr: p.fr === undefined ? 0 : p.fr + (o.fork.reach - p.fr) * a,
+    walked: p.walked === undefined ? 0 : p.walked + (o.walked - p.walked) * a,
   };
 }
