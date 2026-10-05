@@ -49,6 +49,40 @@ const DIRS = [
 ];
 
 /**
+ * A corner from the entry edge of its cell to the exit edge, in the cell's
+ * own frame: x along the way in, y along the way out, from (0, 0) to
+ * (0.5, 0.5). The heading follows a smoothstep through the turn, so the
+ * turn rate builds up from nothing and dies away again instead of jumping
+ * to v/r at the edge of the cell the way it would on a quarter circle; the
+ * path is that heading integrated once, scaled to meet the same two points.
+ * It stays within 4.3 cm of the quarter circle.
+ */
+export const cornerTurn = (u) => u * u * (3 - 2 * u);
+const CURVE = (() => {
+  const n = 96;
+  const pts = [[0, 0]];
+  let x = 0;
+  let y = 0;
+  for (let k = 0; k < n; k++) {
+    const a = (Math.PI / 2) * cornerTurn((k + 0.5) / n);
+    x += Math.cos(a) / n;
+    y += Math.sin(a) / n;
+    pts.push([x, y]);
+  }
+  return pts.map(([px, py]) => [(px * 0.5) / x, (py * 0.5) / y]);
+})();
+
+/** Where on a corner, in the cell's frame, at u from 0 (entry) to 1 (exit). */
+export function cornerPoint(u) {
+  const f = Math.min(Math.max(u, 0), 1) * (CURVE.length - 1);
+  const k = Math.min(Math.floor(f), CURVE.length - 2);
+  const t = f - k;
+  const a = CURVE[k];
+  const b = CURVE[k + 1];
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+}
+
+/**
  * One axis moving toward a target with a speed limit and an acceleration
  * limit, braking in time: a smooth start and a smooth stop.
  */
@@ -157,7 +191,7 @@ export class Robot {
   /**
    * Drive along the planned cells. `traffic` hands out cell reservations,
    * `limit` (0–1) is the safety field's cap on speed. Corners are driven
-   * as quarter circles through the corner cell; the robot only turns on
+   * as smooth curves through the corner cell; the robot only turns on
    * the spot at the start of a route. Returns true on arrival.
    */
   follow(traffic, limit, dt, now = 0) {
@@ -263,19 +297,17 @@ export class Robot {
     if (seg > 0) this.h = HEADINGS[dirOf(path[i], path[i + 1])];
   }
 
-  /** On the quarter circle through corner cell j, u from 0 (entry) to 1 (exit). */
+  /** On the curve through corner cell j, u from 0 (entry) to 1 (exit). */
   arc(j, u) {
     const p = this.path;
     const c = center(p[j]);
     const d1 = DIRS[dirOf(p[j - 1], p[j])];
     const d2 = DIRS[dirOf(p[j], p[j + 1])];
     const turn = d1[0] * d2[1] - d1[1] * d2[0];
-    const ox = c.x - 0.5 * d1[0] + 0.5 * d2[0];
-    const oy = c.y - 0.5 * d1[1] + 0.5 * d2[1];
-    const a = Math.atan2(-d2[1], -d2[0]) + (turn * u * Math.PI) / 2;
-    this.x = ox + 0.5 * Math.cos(a);
-    this.y = oy + 0.5 * Math.sin(a);
-    this.h = wrap(Math.atan2(d1[1], d1[0]) + (turn * u * Math.PI) / 2);
+    const [lx, ly] = cornerPoint(u);
+    this.x = c.x - 0.5 * d1[0] + lx * d1[0] + ly * d2[0];
+    this.y = c.y - 0.5 * d1[1] + lx * d1[1] + ly * d2[1];
+    this.h = wrap(Math.atan2(d1[1], d1[0]) + (turn * cornerTurn(u) * Math.PI) / 2);
   }
 
   holds(cell) {

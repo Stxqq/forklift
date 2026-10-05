@@ -6,7 +6,7 @@
 // so the simulation stays DOM-free.
 
 import { BOX_OFFSET, CELL, H, H_ROADS, RACK_ROWS, V_ROADS, W, WALK_COLS, cellX, cellY, center, key } from "../sim/warehouse.js";
-import { SPEC } from "../sim/robot.js";
+import { SPEC, cornerPoint } from "../sim/robot.js";
 import { FORK, LOAD } from "../sim/collide.js";
 import { SCAN_TIME } from "../sim/world.js";
 import { drawRobot, status } from "./robot.js";
@@ -566,13 +566,22 @@ export class Stage {
     const ctx = this.ctx;
     ctx.beginPath();
     ctx.moveTo(v.x, v.y);
-    // rounded the way the robot drives the corners
-    for (let j = r.i + 1; j < path.length; j++) {
+    // the corners as the robot drives them, from where it is now
+    const curve = (j, u0) => {
       const c = center(path[j]);
-      if (j < path.length - 1) {
-        const n = center(path[j + 1]);
-        ctx.arcTo(c.x, c.y, n.x, n.y, 0.5);
+      const a = center(path[j - 1]);
+      const n = center(path[j + 1]);
+      for (let k = Math.ceil(u0 * 12); k <= 12; k++) {
+        const [lx, ly] = cornerPoint(k / 12);
+        ctx.lineTo(c.x + (lx - 0.5) * (c.x - a.x) + ly * (n.x - c.x), c.y + (lx - 0.5) * (c.y - a.y) + ly * (n.y - c.y));
+      }
+    };
+    if (r.corner(r.i) === 1 && r.seg < 0.5) curve(r.i, 0.5 + r.seg);
+    for (let j = r.i + 1; j < path.length; j++) {
+      if (r.corner(j) === 1) {
+        curve(j, j === r.i + 1 && r.seg >= 0.5 ? r.seg - 0.5 : 0);
       } else {
+        const c = center(path[j]);
         ctx.lineTo(c.x, c.y);
       }
     }

@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { World } from "../src/sim/world.js";
-import { SPEC } from "../src/sim/robot.js";
+import { Robot, SPEC } from "../src/sim/robot.js";
+import { center, key } from "../src/sim/warehouse.js";
 import { encode } from "../src/sim/qr.js";
 
 const run = (world, seconds, each = () => {}) => {
@@ -191,4 +192,30 @@ test("cooperative routing beats routing as if the floor were empty", () => {
   const simple = perHour("simple");
   const coop = perHour("cooperative");
   assert.ok(coop > simple, `${coop} vs ${simple}`);
+});
+
+test("corners: the turn rate builds up from zero and dies away, on a curve close to the quarter circle", () => {
+  const r = new Robot(1, key(5, 5));
+  r.path = [key(5, 5), key(6, 5), key(6, 6)];
+  const c = center(key(6, 5));
+  const poses = [];
+  for (let k = 0; k <= 400; k++) {
+    const t = k / 200;
+    r.i = Math.min(1, Math.floor(t));
+    r.seg = t - r.i;
+    r.place();
+    poses.push({ x: r.x, y: r.y, h: r.h });
+  }
+  const step = 1 / 200;
+  const rate = poses.slice(1).map((p, k) => Math.abs(Math.atan2(Math.sin(p.h - poses[k].h), Math.cos(p.h - poses[k].h))) / step);
+  // no jumps anywhere along the way
+  for (let k = 1; k < poses.length; k++) assert.ok(Math.hypot(poses[k].x - poses[k - 1].x, poses[k].y - poses[k - 1].y) < step * 1.01);
+  // turning only inside the corner cell, from zero at its edges to the most in the middle
+  const peak = Math.max(...rate);
+  assert.ok(rate[100] < 0.02 * peak && rate[299] < 0.02 * peak, "starts and ends at zero");
+  assert.ok(rate[110] < rate[150] && rate[290] < rate[250]);
+  assert.ok(Math.abs(rate[200] - peak) < 0.02 * peak && peak < 1.6 * (Math.PI / 2));
+  assert.ok(Math.abs(poses[400].h - Math.PI / 2) < 1e-9);
+  // and close to the quarter circle round (c.x - 0.5, c.y + 0.5)
+  for (const p of poses.slice(100, 301)) assert.ok(Math.abs(Math.hypot(p.x - (c.x - 0.5), p.y - (c.y + 0.5)) - 0.5) < 0.045);
 });
