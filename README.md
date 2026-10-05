@@ -3,7 +3,7 @@
 A fleet of forklift robots works a small warehouse in the browser: they plan the quickest routes around each other, lift packages out of their bays, decode each QR label from pixels and drop it at the right dock, while a delivery log checks every step. Plain JavaScript.
 
 <p align="center">
-  <a href="https://stxqq.github.io/forklift/"><img src=".github/assets/hero.gif" width="880" alt="A robot drives to bay C5 with its arrival time shown at the end of its blue route, lifts a box, the scan card decodes the label as PKG-00657, Bay C5, Dock 1 with three codewords corrected, and the delivery log marks it arrived at dock 1"></a>
+  <a href="https://stxqq.github.io/forklift/"><img src=".github/assets/hero.gif" width="880" alt="The 3D view: from behind and above, a robot lifts a box out of bay C5, the scan card decodes its label as PKG-00657, Bay C5, Dock 1, and the robot drives off along a glowing blue route between the racks, its speed and status in the corner"></a>
 </p>
 
 <p align="center">
@@ -45,6 +45,9 @@ order asked for.
 - **Drive**: ↑ ↓ to drive, ← → to turn, Space to work the fork, S to scan.
 - **Label lab**: type a label and watch the code being built step by step,
   scratch it, scan it, download it.
+
+Every mode can be watched on the floor plan or in 3D, from behind the robot
+in focus.
 
 ## How it works
 
@@ -133,6 +136,43 @@ the bytes.
 <p align="center">
   <img src=".github/assets/planner.png" width="880" alt="Dispatch with four robots and the route explainer on: the reservation table as a timeline per robot next to the stage, booked cells tinted on the floor and the focused robot's route with its arrival time">
 </p>
+
+## Two views
+
+<p align="center">
+  <img src=".github/assets/map.gif" width="880" alt="The floor plan: a robot drives to bay C5 with its arrival time at the end of its blue route, lifts a box, the scan card decodes the label, and the delivery log marks it arrived at dock 1">
+</p>
+
+The **Map** is the floor plan above: every robot, its route and arrival
+time, the boxes on the shelves, the people. The **3D** view is what the
+robot in focus sees, in the style of a car's self-driving display: a dark
+floor with the lane lines drawn in light grey and yellow, racks, pallets
+and boxes at their real heights, people as soft capsules with a hint of
+their vests, and the route as a glowing blue ribbon that dims and pulses
+while the robot waits for a cell. The safety field is a fan on the floor
+that turns amber or red when someone is in it, the lidar returns are faint
+dots, and the box it's going for has a blue outline. The corners show the
+speed, a status line ("Driving to Bay C6", "Waiting · Robot 2 has the cells
+ahead", "Lifting", "Scanning"), a mode icon and a mini map. The choice is
+remembered in your browser.
+
+<p align="center">
+  <img src=".github/assets/view3d.png" width="880" alt="The 3D view with four robots: the robot in focus carrying a box toward dock 3 between the racks, other robots and boxes as matte grey shapes, the speed 0.8 m/s with Autonomous and Driving to Dock 3 under it, a mini map top right and the scan card of another robot's unreadable label">
+</p>
+
+It's a small WebGL2 renderer written for this, no library: instanced boxes,
+cylinders and capsules lit by a sun and a sky light, soft contact shadows
+under everything, darkening near the floor as a cheap stand-in for ambient
+occlusion, fog to black, and the ribbon drawn once additively and once more
+into a half-size buffer that is blurred and added on top, masked by
+whatever stands in front of it. The canvas's multisampling smooths the
+edges. The chase camera eases toward a point behind and above the robot at
+a rate that doesn't depend on the frame rate, follows it round corners, and
+holds its bearing while the robot turns on the spot to a bay, so it never
+swings into the racks. Both views draw the same interpolated sim state, and
+a test checks that the 3D scene can't change what the robots do. With
+reduced motion the camera keeps one bearing; without WebGL2 the page says
+so and stays on the map.
 
 ## Label lab
 
@@ -254,6 +294,10 @@ in 1,351 scans.
   the fork docks itself straight before it reaches into a bay.
 - **Physics is kinematic.** No wheel slip, no load swinging, and the battery
   is a counter.
+- **The 3D view is for watching.** Boxes are ordered on the map; the 3D
+  scene uses blob shadows and height darkening rather than real shadow maps
+  or screen-space ambient occlusion, and the glow mask is half resolution,
+  so a thin halo can show round a mast.
 
 ## Project layout
 
@@ -262,8 +306,9 @@ src/sim/       warehouse, planner (space-time A*), robot, collide, world
                (reservations, dispatch, people, jobs), orders and log,
                qr and rs (no DOM)
 src/render/    canvas stage, robot drawing, anatomy spec sheet
+src/render3d/  WebGL2 renderer, scene building, chase camera, matrices
 src/lab/       PNG and SVG label export
-src/ui/        the page: sessions, label lab, explainers, controls
+src/ui/        the page: sessions, 3D view and HUD, label lab, explainers
 scripts/       bench.mjs, results.json, check-vision.mjs, png.mjs
 test/          node:test suites
 ```
