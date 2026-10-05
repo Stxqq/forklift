@@ -3,7 +3,7 @@
 A fleet of forklift robots works a small warehouse in the browser: they plan the quickest routes around each other, lift packages out of their bays, decode each QR label from pixels and drop it at the right dock, while a delivery log checks every step. Plain JavaScript.
 
 <p align="center">
-  <a href="https://stxqq.github.io/forklift/"><img src=".github/assets/hero.gif" width="880" alt="The 3D view: from behind and above, a robot lifts a box out of bay C5, the scan card decodes its label as PKG-00657, Bay C5, Dock 1, and the robot drives off along a glowing blue route between the racks, its speed and status in the corner"></a>
+  <a href="https://stxqq.github.io/forklift/"><img src=".github/assets/hero.gif" width="880" alt="The 3D view: from behind and above, a robot lifts a box out of bay C5 between steel racks of cardboard boxes, the scan card decodes its label as PKG-00657, Bay C5, Dock 1, and the robot drives off along a glowing blue route, its speed and status in the corner"></a>
 </p>
 
 <p align="center">
@@ -87,7 +87,8 @@ from seed 153, and the picture in it is the exact image the decoder read.
   someone for 2.5 s, a robot replans.
 - **Robot.** Differential drive, 0.70 by 0.52 m, 1.5 m/s. It speeds up with
   limited jerk, brakes in time for the end of what it holds, takes corners
-  as quarter circles at 0.8 m/s, and turns on the spot only to start a
+  at 0.8 m/s on a curve whose turn rate builds up and dies away smoothly
+  (no jolt where the straight meets the bend), and turns on the spot only to start a
   route or to face a bay or dock. The fork lifts 1.6 m and reaches 0.62 m,
   both eased, and goes up to the shelf while the robot is still driving in.
 - **Collisions.** The robot's real outline, chassis plus fork plus load, is
@@ -146,33 +147,61 @@ the bytes.
 The **Map** is the floor plan above: every robot, its route and arrival
 time, the boxes on the shelves, the people. The **3D** view is what the
 robot in focus sees, in the style of a car's self-driving display: a dark
-floor with the lane lines drawn in light grey and yellow, racks, pallets
-and boxes at their real heights, people as soft capsules with a hint of
-their vests, and the route as a glowing blue ribbon that dims and pulses
-while the robot waits for a cell. The safety field is a fan on the floor
-that turns amber or red when someone is in it, the lidar returns are faint
-dots, and the box it's going for has a blue outline. The corners show the
-speed, a status line ("Driving to Bay C6", "Waiting · Robot 2 has the cells
-ahead", "Lifting", "Scanning"), a mode icon and a mini map. The choice is
+concrete floor with the lane lines in light grey and yellow, steel racks
+with punched uprights and warm beams, wooden pallets, cardboard boxes with
+tape and labels, dock doors that roll up when a loaded robot arrives, and
+the route as a glowing blue ribbon that dims and pulses while the robot
+waits for a cell. The safety field is a fan on the floor that turns amber
+or red when someone is in it, the lidar returns are faint dots, and the box
+it's going for has a blue outline and glow. The corners show the speed, a
+status line ("Driving to Bay C6", "Waiting · Robot 2 has the cells ahead",
+"Lifting", "Scanning"), a mode icon and a mini map. The choice is
 remembered in your browser.
 
 <p align="center">
-  <img src=".github/assets/view3d.png" width="880" alt="The 3D view with four robots: the robot in focus carrying a box toward dock 3 between the racks, other robots and boxes as matte grey shapes, the speed 0.8 m/s with Autonomous and Driving to Dock 3 under it, a mini map top right and the scan card of another robot's unreadable label">
+  <img src=".github/assets/view3d.png" width="880" alt="The 3D view with four robots: the robot in focus carrying a box toward dock 3 between steel racks of cardboard boxes on pallets, the speed 0.8 m/s with Autonomous and Driving to Dock 3 under it, a mini map top right and the scan card of another robot's unreadable label">
 </p>
 
-It's a small WebGL2 renderer written for this, no library: instanced boxes,
-cylinders and capsules lit by a sun and a sky light, soft contact shadows
-under everything, darkening near the floor as a cheap stand-in for ambient
-occlusion, fog to black, and the ribbon drawn once additively and once more
-into a half-size buffer that is blurred and added on top, masked by
-whatever stands in front of it. The canvas's multisampling smooths the
-edges. The chase camera eases toward a point behind and above the robot at
-a rate that doesn't depend on the frame rate, follows it round corners, and
+<p align="center">
+  <img src=".github/assets/view3d-robot.png" width="436" alt="Close-up of a robot from the side: rounded chassis with its light strip, mast with the inner rails, carriage and backrest, a box on the tines with its real QR label, a drive wheel with hub and spokes, and a caster on the outrigger">&nbsp;<img src=".github/assets/view3d-person.png" width="436" alt="Close-up from behind a robot of a person on the walkway: white hard hat, hi-vis vest with reflective bands, holding a tablet, with the robot's safety fan glowing amber on the floor">
+</p>
+
+The robot is a hierarchy of parts, so things move the way they would: the
+drive wheels roll with the distance driven (and turn against each other
+when it spins on the spot), the casters swivel to where they're being
+pushed, the inner mast rises once the fork goes above a meter, the box
+rides on the tines, the lidar turns, the beacon flashes amber while it
+moves, the light strip goes blue, amber, green after a good read and red
+when someone stops it, and it dips its nose a touch when it brakes. People
+walk with a stride matched to their speed, swing their arms against their
+legs, turn smoothly into a new direction, shift their weight while they
+wait at a crossing and look around; some carry a tablet. While a label is
+read, a blue laser fan sweeps across it.
+
+It's a small WebGL2 renderer written for this, no library: instanced
+rounded boxes with true bevels, cylinders and capsules, each with a full
+rotation; a key light, a fill light, a cool rim light and the sky, in
+linear light with a filmic tone curve and sRGB output; soft contact shadows
+offset away from the light and darkening near the floor as a cheap stand-in
+for ambient occlusion; faint concrete noise, coloured glows on the floor
+from the robots' lights, fog to black and a slight vignette. The ribbon is
+drawn once additively and once more into a half-size buffer that is blurred
+and added on top, masked by whatever stands in front of it. Anything
+between the camera and the robot it follows is thinned to a fifth with an
+ordered dither, so the robot and its route are always in view. Far away,
+pallets, boxes, robots and people drop to simpler shapes. The canvas's
+multisampling smooths the edges.
+
+The chase camera sits behind, above and a little ahead of the robot, so it
+is big in the lower middle and the route runs up the screen. Position and
+bearing follow critically damped springs solved exactly per frame, so the
+motion is the same at any frame rate, never overshoots and never rolls. It
 holds its bearing while the robot turns on the spot to a bay, so it never
-swings into the racks. Both views draw the same interpolated sim state, and
-a test checks that the 3D scene can't change what the robots do. With
-reduced motion the camera keeps one bearing; without WebGL2 the page says
-so and stays on the map.
+swings into the racks, and it always sits above them. After six idle
+seconds it drifts slowly round the robot. Both views draw the same
+interpolated sim state, and a test checks that the 3D scene can't change
+what the robots do. With reduced motion the camera keeps one bearing and
+nothing spins; without WebGL2 the page says so and stays on the map.
 
 ## Label lab
 
@@ -245,8 +274,8 @@ served. The page shows the same numbers from `scripts/results.json`.
 | Packages per hour, cooperative routing | 58 | 233 |
 | Packages per hour, simple routing | 57 | 226 |
 | Mean trip (order taken to box at the dock), cooperative | 51.0 s | 50.7 s |
-| Mean trip, simple | 52.4 s | 54.5 s |
-| Reported missing / wrong package / check by hand | 9 / 8 / 14 | 25 / 19 / 47 |
+| Mean trip, simple | 52.4 s | 54.4 s |
+| Reported missing / wrong package / check by hand | 9 / 8 / 14 | 27 / 19 / 48 |
 | Closest two robots came | – | 1.00 m |
 
 Before this version the warehouse had one-way lanes round a ring and
@@ -262,8 +291,8 @@ dispatch picking the nearest order. The fleet is busy driving, not waiting:
 over three 20-minute runs four robots spend about 3 % of their time held
 up by each other, counting planned waits.
 
-94 % of labels read on the first try; Reed–Solomon fixed 1,091 codewords
-in 1,351 scans.
+94 % of labels read on the first try; Reed–Solomon fixed 1,113 codewords
+in 1,355 scans.
 
 <p align="center">
   <img src=".github/assets/dispatch.png" width="880" alt="Dispatch with four robots and the scan explainer: the delivery log with arrived and in-transit rows, the robots' routes in blue with an arrival time, and a scan card showing camera, threshold, finder patterns, sampled grid and the decoded bytes of PKG-00954 with four codewords fixed">
@@ -287,17 +316,18 @@ in 1,351 scans.
   stuck robot replans, but it can cost a few seconds. Overtaking a robot
   that has stopped to pick isn't allowed; the one behind waits or reroutes.
 - **The grid is coarse.** One-meter lanes, one robot per cell, corners as
-  arcs through one cell. People walk the strips and cross at crossings and
+  curves through one cell. People walk the strips and cross at crossings and
   never step into a road anywhere else.
 - **Driving by hand skips the rules.** In Drive the robot ignores lanes and
   reservations; walls, racks, people and the safety field still apply, and
   the fork docks itself straight before it reaches into a bay.
 - **Physics is kinematic.** No wheel slip, no load swinging, and the battery
   is a counter.
-- **The 3D view is for watching.** Boxes are ordered on the map; the 3D
-  scene uses blob shadows and height darkening rather than real shadow maps
-  or screen-space ambient occlusion, and the glow mask is half resolution,
-  so a thin halo can show round a mast.
+- **The 3D view is for watching.** Boxes are ordered on the map. The scene
+  uses soft blob shadows and height darkening rather than shadow maps or
+  screen-space ambient occlusion, faded parts are dithered rather than
+  sorted and blended, and the glow mask is half resolution, so a thin halo
+  can show round a mast. People's legs don't plant on the floor exactly.
 
 ## Project layout
 
