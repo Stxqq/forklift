@@ -6,10 +6,11 @@
 // so the simulation stays DOM-free.
 
 import { BOX_OFFSET, CELL, H, H_ROADS, RACK_ROWS, V_ROADS, W, WALK_COLS, cellX, cellY, center, key } from "../sim/warehouse.js";
-import { SPEC, wrap } from "../sim/robot.js";
+import { SPEC } from "../sim/robot.js";
 import { FORK, LOAD } from "../sim/collide.js";
 import { SCAN_TIME } from "../sim/world.js";
 import { drawRobot, status } from "./robot.js";
+import { between } from "./interp.js";
 
 const INK = "#111113";
 const TILE = "#f5f5f6";
@@ -42,19 +43,6 @@ export function portfolioEase(t) {
     else hi = mid;
   }
   return by((lo + hi) / 2);
-}
-
-/** Where something is drawn: between its last two sim steps. */
-function between(o, a) {
-  const p = o.prev;
-  if (!p) return o;
-  return {
-    x: p.x + (o.x - p.x) * a,
-    y: p.y + (o.y - p.y) * a,
-    h: p.h + wrap(o.h - p.h) * a,
-    fh: p.fh === undefined ? 0 : p.fh + (o.fork.height - p.fh) * a,
-    fr: p.fr === undefined ? 0 : p.fr + (o.fork.reach - p.fr) * a,
-  };
 }
 
 function rr(ctx, x, y, w, h, r) {

@@ -6,6 +6,7 @@ import { Stage, easeFactor } from "../render/stage.js";
 import { Counter } from "./counter.js";
 import { DispatchSession, DriveSession, ROBOT_COUNTS, SPEEDS, WatchSession } from "./sessions.js";
 import { Lab } from "./lab.js";
+import { View3D } from "./view3d.js";
 import { drawPipeline, drawTimeline, planView } from "./explain.js";
 
 const $ = (selector) => document.querySelector(selector);
@@ -289,16 +290,24 @@ function showScan(world, now) {
   if (scanRevealedAt && now - scanRevealedAt > (explainScan ? 4200 : 1800)) return hideScan();
   // next to the robot that's scanning, kept inside the view
   const robot = world.robots[scan.robot];
-  const view = canvas.getBoundingClientRect();
+  const bounds = canvas.getBoundingClientRect();
   const p = stage.toScreen(robot.x, robot.y);
   const cw = scanCard.offsetWidth || 184;
   const ch = scanCard.offsetHeight || 230;
   const { left, bottom } = stage.insets;
+  if (view === "3d") {
+    // in 3D it waits top right, under the mini map, clear of the route
+    const r = view3d.region;
+    scanCard.style.left = `${r.x + r.w - cw - 12}px`;
+    scanCard.style.top = `${r.y + (r.w < 600 ? 86 : 120)}px`;
+    scanCard.hidden = false;
+    return;
+  }
   let x = p.x + 34;
-  if (x + cw > view.width - 12) x = p.x - 34 - cw;
+  if (x + cw > bounds.width - 12) x = p.x - 34 - cw;
   let y = p.y - ch / 2;
-  y = Math.max(12, Math.min(view.height - bottom - ch - 12, y));
-  x = Math.max(left + 12, Math.min(view.width - cw - 12, x));
+  y = Math.max(12, Math.min(bounds.height - bottom - ch - 12, y));
+  x = Math.max(left + 12, Math.min(bounds.width - cw - 12, x));
   scanCard.style.left = `${x}px`;
   scanCard.style.top = `${y}px`;
   scanCard.hidden = false;
@@ -362,6 +371,37 @@ function showSensors(robot) {
   safetyEl.dataset.state = robot.safety;
 }
 
+// -------------------------------------------------------------- 3D view
+
+const view3d = new View3D($("#view3d"), { motion });
+const viewseg = $("#viewseg");
+const VIEW_KEY = "forklift:view";
+let view = "map";
+function setView(next, { save = true } = {}) {
+  if (next === "3d" && !view3d.start()) {
+    say("The 3D view needs WebGL2, so this stays on the map");
+    viewseg.querySelector('[data-view="3d"]').disabled = true;
+    next = "map";
+  }
+  view = next;
+  stageEl.dataset.view = view;
+  $("#view3d").hidden = view !== "3d";
+  for (const b of viewseg.querySelectorAll("button")) b.setAttribute("aria-pressed", String(b.dataset.view === view));
+  scanShown = null;
+  if (save) {
+    try {
+      localStorage.setItem(VIEW_KEY, view);
+    } catch {
+      // private mode or storage blocked: the choice just isn't remembered
+    }
+  }
+}
+view3d.onLost = () => setView("map");
+for (const b of viewseg.querySelectorAll("button")) b.addEventListener("click", () => setView(b.dataset.view));
+$("#view3d").addEventListener("click", () => {
+  if (mode === "dispatch") say("Switch to the map to order boxes");
+});
+
 // ------------------------------------------------------------ explainers
 
 const planCard = $("#plan-card");
@@ -423,7 +463,8 @@ function frame(now) {
   session.advance(dt, 10);
   const world = session.world;
   const focus = session.focus;
-  stage.draw(world, focus, { time: now / 1000, alpha: session.alpha, now });
+  if (view === "3d") view3d.render(world, focus, { alpha: session.alpha, dt, time: now / 1000 });
+  else stage.draw(world, focus, { time: now / 1000, alpha: session.alpha, now });
   showOrder(session);
   showLog(world);
   showScan(world, now);
@@ -443,7 +484,9 @@ function frame(now) {
   const text = `Seed ${world.seed} · ${robots} robot${robots > 1 ? "s" : ""} · ${world.workers.length} people on foot · ${clock(world.time)}`;
   if (caption.textContent !== text) caption.textContent = text;
   stageEl.dataset.ready = "";
-  perf.work[perf.n++ % perf.work.length] = performance.now() - started;
+  const took = performance.now() - started;
+  perf.work[perf.n++ % perf.work.length] = took;
+  if (view === "3d") view3d.adapt(dt * 1000);
   raf = requestAnimationFrame(frame);
 }
 
@@ -453,6 +496,23 @@ function resize() {
     ? { left: 304 + 20, right: 0, top: 0, bottom: row.offsetHeight + 28 }
     : { left: 0, right: 0, top: 0, bottom: mode === "drive" && matchMedia("(max-width: 680px)").matches ? 84 : 0 };
   stage.resize(insets);
+  // the 3D view and the view toggle sit in the same free part of the stage
+  const pad = wide.matches ? 12 : 8;
+  const box = canvas.getBoundingClientRect();
+  const region = {
+    x: insets.left + pad,
+    y: insets.top + pad,
+    w: Math.max(1, box.width - insets.left - insets.right - pad * 2),
+    h: Math.max(1, box.height - insets.top - insets.bottom - pad * 2),
+  };
+  view3d.place(region);
+  viewseg.style.left = `${region.x + 12}px`;
+  viewseg.style.top = `${region.y + 12}px`;
+  // notes appear at the top of the same area, between the toggle and the
+  // mini map, cut short with an ellipsis rather than overlapping either
+  toast.style.left = `${region.x + region.w / 2}px`;
+  toast.style.top = `${region.y + 12}px`;
+  toast.style.maxWidth = `${Math.max(160, region.w - (region.w < 600 ? 250 : 320))}px`;
 }
 new ResizeObserver(() => resize()).observe(canvas);
 new ResizeObserver(() => resize()).observe($("#hud-row"));
@@ -628,4 +688,9 @@ new Lab($("#lab"), { motion });
 addEventListener("hashchange", () => switchMode(location.hash.slice(1)));
 setMode(location.hash.slice(1));
 resize();
+try {
+  if (localStorage.getItem(VIEW_KEY) === "3d") setView("3d", { save: false });
+} catch {
+  // no storage: start on the map
+}
 raf = requestAnimationFrame(frame);
